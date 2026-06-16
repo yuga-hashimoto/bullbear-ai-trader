@@ -1,0 +1,21 @@
+# Auto-promotion policy. A challenger is promoted to Champion ONLY if ALL of
+# these are satisfied. Promotion never disables the Risk Engine or weakens
+# safety limits (enforced by guardrails). Win rate alone is never sufficient.
+auto_promotion:
+  enabled: true
+  environment_allowed:
+    paper: true
+    live: false                          # live auto-promotion disabled initially
+  min_shadow_days: 10
+  min_canary_days: 5
+  min_trades: 30
+  min_profit_factor: 1.25
+  min_win_rate_delta_vs_champion: 0.03
+  min_expectancy_delta_vs_champion: 0.001
+  max_drawdown_not_worse_than_champion: true
+  max_worst_day_pct: 2.0
+  require_positive_net_pnl_after_costs: true
+  require_robustness_check: true
+  require_out_of_sample_pass: true
+  max_overfitting_risk: "MEDIUM"          # LOW < MEDIUM < HIGH
+  allow_auto_promote_to_champion: true

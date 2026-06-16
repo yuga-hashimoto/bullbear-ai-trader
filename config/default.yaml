@@ -1,0 +1,186 @@
+# ============================================================================
+# bullbear-ai-trader — default configuration
+# Backtest-only. Live trading is hard-disabled (see safety section).
+# ============================================================================
+
+# --- Universe ---------------------------------------------------------------
+# Tradable leveraged ETFs.
+symbols:
+  - TQQQ   # NASDAQ-100 3x bull
+  - SQQQ   # NASDAQ-100 3x bear
+  - SOXL   # Semiconductors 3x bull
+  - SOXS   # Semiconductors 3x bear
+
+# Underlying / context symbols used only for signals & features (not traded).
+context_symbols:
+  - QQQ    # NASDAQ-100 (decision asset for TQQQ/SQQQ)
+  - SMH    # Semiconductors (decision asset for SOXL/SOXS)
+  - SPY    # Broad market regime
+  - "^VIX" # Volatility (optional; skipped gracefully if unavailable)
+
+# Benchmarks for the backtest report comparison.
+benchmark_symbols:
+  - QQQ
+  - TQQQ
+  - SOXL
+
+# Maps a tradable ETF to (decision_symbol, direction).
+# direction = +1 means "buy this ETF when decision_symbol goes UP".
+instruments:
+  TQQQ: { decision: QQQ, direction: +1 }
+  SQQQ: { decision: QQQ, direction: -1 }
+  SOXL: { decision: SMH, direction: +1 }
+  SOXS: { decision: SMH, direction: -1 }
+
+# --- Data -------------------------------------------------------------------
+data_source: yfinance        # yfinance | moomoo | synthetic
+interval: 5m                 # 1m | 5m | 15m (5m prioritized initially)
+start_date: "2024-01-01"
+end_date: "2024-06-30"
+timezone: America/New_York
+# Regular US cash session (exchange local time).
+session_open: "09:30"
+session_close: "16:00"
+
+# --- Train / Test split (time-based, no shuffling) --------------------------
+train_start: "2024-01-01"
+train_end: "2024-04-30"
+test_start: "2024-05-01"
+test_end: "2024-06-30"
+
+# Walk-forward validation (used by `backtest --walk-forward`).
+walk_forward:
+  enabled: false
+  train_days: 40
+  test_days: 10
+  step_days: 10
+
+# --- Labeling ---------------------------------------------------------------
+labeling:
+  horizon_bars: 6            # 6 x 5m = 30 min ahead
+  up_threshold: 0.0015       # future_return > +0.15% -> UP
+  down_threshold: -0.0015    # future_return < -0.15% -> DOWN
+  # else FLAT
+
+# --- Agent (decision-making lives OUTSIDE this repo) ------------------------
+# The agent only PROPOSES trades via a standard Signal JSON. It never places
+# orders. type: mock | replay | external | local_model.
+agent:
+  type: mock
+  endpoint: null               # required for type: external (e.g. http URL)
+  signal_file: null            # JSONL path for type: replay
+  transport: http              # http | command | mcp | file | stdio | websocket
+  timeout_seconds: 30
+  fallback_to_no_trade: true   # external misconfig -> safe fallback
+
+# --- Local ML model (OPTIONAL, used only by LocalModelAgent; NOT main path) -
+model_type: lightgbm         # lightgbm | random_forest | gradient_boosting
+model_params:
+  n_estimators: 300
+  learning_rate: 0.05
+  max_depth: 6
+  random_state: 42
+
+# --- Strategy (thin signal->intent mapping; NO AI here) ---------------------
+strategy:
+  max_concurrent_positions: 1 # design supports up to 2
+  expected_return_weight: 1.0
+
+# --- Risk engine (AUTHORITATIVE over the agent; NO_TRADE is the safe default) -
+risk:
+  confidence_threshold: 0.65       # reject agent BUY signals below this
+  max_loss_per_trade_pct: 0.7      # stop-loss
+  take_profit_pct: 1.2
+  trailing_stop_pct: 0.5
+  max_daily_loss_pct: 2.0          # halt trading for the day when breached
+  max_trades_per_day: 3
+  max_consecutive_losses: 2
+  max_holding_minutes: 120
+  no_trade_first_minutes: 10       # after the open
+  no_new_entry_last_minutes: 30    # before the close
+  force_close_minutes_before_close: 5
+  max_spread_pct: 0.15             # skip if quoted spread wider than this
+  max_atr_pct: 5.0                 # skip if ATR% (volatility) too high
+  min_bars_between_same_symbol: 3  # cooldown after exiting a symbol
+
+# --- Backtest / execution costs ---------------------------------------------
+backtest:
+  initial_cash: 100000.0
+  position_sizing: fixed_fraction
+  fraction_per_trade: 1.0          # fraction of equity per single position
+  fill_model: next_bar_open        # decide at bar close, fill at next bar open
+  random_seed: 42
+
+costs:
+  commission_per_share: 0.0        # e.g. moomoo US: often $0 + tiny fees
+  commission_pct: 0.0005           # 0.05% notional (conservative all-in)
+  min_commission: 0.0
+  slippage_pct: 0.02               # 0.02% adverse on every fill
+  spread_pct: 0.03                 # 0.03% half-spread assumption
+  # NOTE: fills are intentionally pessimistic. Never give the strategy a
+  # better price than a real market order would plausibly get.
+
+# --- LIVE TRADING SAFETY (do not enable lightly) ----------------------------
+# Hard-disabled. Enabling requires config (live_trading_enabled: true) + env var
+# BULLBEAR_ALLOW_LIVE=1 + explicit CLI/API flag. Backtest/paper ignore this.
+trading:
+  live_trading_enabled: false
+  require_manual_live_unlock: true
+  allow_live_orders: false         # independent switch; LiveRunner also requires this
+  broker: paper                    # backtest | paper | moomoo (paper for the runner)
+
+# --- Continuous runner (PaperRunner runs during US regular hours) -----------
+runner:
+  mode: paper                      # backtest | paper | live(disabled)
+  interval: 5m                     # 5m now; 1m supported by design
+  timezone: America/New_York
+  regular_session_only: true
+  extended_hours_enabled: false    # future toggle; pre/after-market off for now
+  poll_interval_seconds: 10
+  align_to_bar_boundary: true
+  prevent_duplicate_bar_processing: true
+  stale_data_threshold_seconds: 180
+  max_agent_latency_seconds: 30
+  max_data_errors_before_stop: 3
+  max_agent_errors_before_stop: 3
+  heartbeat_interval_seconds: 30
+
+# --- Market calendar (America/New_York) -------------------------------------
+market:
+  calendar: XNYS                   # pandas_market_calendars; static fallback if absent
+  session_timezone: America/New_York
+  regular_open: "09:30"
+  regular_close: "16:00"
+  early_close_force_exit_minutes_before_close: 5
+
+# --- Evolution (Champion/Challenger/Shadow/Canary/Auto-promotion) -----------
+# Auto-promotion runs WITHOUT human approval but ONLY when promotion_policy.yaml
+# passes. Champion switches happen after market close; rollback is immediate.
+evolution:
+  enabled: true
+  environment: paper                 # paper | live (live auto-promo disabled)
+  shadow_enabled: true
+  champion_switch: after_close_only
+  mutations_per_day: 3
+  promotion_policy_file: config/promotion_policy.yaml
+  rollback_policy_file: config/rollback_policy.yaml
+
+adaptive_allocation:
+  enabled: true
+  mode: epsilon_greedy               # epsilon_greedy | ucb1 | thompson
+  epsilon: 0.1
+  min_allocation_pct: 0
+  max_challenger_allocation_pct: 30
+  reallocate_every_bars: 12
+  reward_metric: risk_adjusted_expectancy
+  live_enabled: false                # bandit reallocation disabled on live
+
+# --- Paths ------------------------------------------------------------------
+paths:
+  raw_dir: data/raw
+  features_dir: data/features
+  artifacts_dir: artifacts
+  reports_dir: reports
+
+# --- Logging ----------------------------------------------------------------
+log_level: INFO

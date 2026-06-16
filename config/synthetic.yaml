@@ -1,0 +1,136 @@
+# Offline demo / test config. Uses the deterministic synthetic data source so
+# the full pipeline runs with no network access. Not a realistic strategy —
+# it exists to exercise the plumbing end to end with the Mock agent.
+symbols: [TQQQ, SQQQ, SOXL, SOXS]
+context_symbols: [QQQ, SMH, SPY]
+benchmark_symbols: [QQQ, TQQQ, SOXL]
+instruments:
+  TQQQ: { decision: QQQ, direction: +1 }
+  SQQQ: { decision: QQQ, direction: -1 }
+  SOXL: { decision: SMH, direction: +1 }
+  SOXS: { decision: SMH, direction: -1 }
+
+data_source: synthetic
+interval: 5m
+start_date: "2024-01-01"
+end_date: "2024-03-31"
+timezone: America/New_York
+session_open: "09:30"
+session_close: "16:00"
+
+train_start: "2024-01-01"
+train_end: "2024-02-29"
+test_start: "2024-03-01"
+test_end: "2024-03-31"
+
+walk_forward: { enabled: false, train_days: 30, test_days: 10, step_days: 10 }
+
+labeling:
+  horizon_bars: 6
+  up_threshold: 0.0010
+  down_threshold: -0.0010
+
+# Agent: mock by default (plumbing verification only).
+agent:
+  type: mock
+  endpoint: null
+  signal_file: null
+  transport: http
+  timeout_seconds: 30
+  fallback_to_no_trade: true
+
+# Local ML model is optional (LocalModelAgent only); not the main path.
+model_type: random_forest
+model_params:
+  n_estimators: 120
+  max_depth: 6
+  random_state: 42
+
+strategy:
+  max_concurrent_positions: 1
+  expected_return_weight: 1.0
+
+risk:
+  confidence_threshold: 0.60
+  max_loss_per_trade_pct: 0.7
+  take_profit_pct: 1.2
+  trailing_stop_pct: 0.5
+  max_daily_loss_pct: 2.0
+  max_trades_per_day: 3
+  max_consecutive_losses: 2
+  max_holding_minutes: 120
+  no_trade_first_minutes: 10
+  no_new_entry_last_minutes: 30
+  force_close_minutes_before_close: 5
+  max_spread_pct: 0.15
+  max_atr_pct: 8.0
+  min_bars_between_same_symbol: 3
+
+backtest:
+  initial_cash: 100000.0
+  position_sizing: fixed_fraction
+  fraction_per_trade: 1.0
+  fill_model: next_bar_open
+  random_seed: 42
+
+costs:
+  commission_per_share: 0.0
+  commission_pct: 0.0005
+  min_commission: 0.0
+  slippage_pct: 0.02
+  spread_pct: 0.03
+
+trading:
+  live_trading_enabled: false
+  require_manual_live_unlock: true
+  allow_live_orders: false
+  broker: paper
+
+runner:
+  mode: paper
+  interval: 5m
+  timezone: America/New_York
+  regular_session_only: true
+  extended_hours_enabled: false
+  poll_interval_seconds: 2
+  align_to_bar_boundary: true
+  prevent_duplicate_bar_processing: true
+  stale_data_threshold_seconds: 600
+  max_agent_latency_seconds: 10
+  max_data_errors_before_stop: 3
+  max_agent_errors_before_stop: 3
+  heartbeat_interval_seconds: 5
+
+market:
+  calendar: XNYS
+  session_timezone: America/New_York
+  regular_open: "09:30"
+  regular_close: "16:00"
+  early_close_force_exit_minutes_before_close: 5
+
+evolution:
+  enabled: true
+  environment: paper
+  shadow_enabled: true
+  champion_switch: after_close_only
+  mutations_per_day: 3
+  promotion_policy_file: config/promotion_policy.yaml
+  rollback_policy_file: config/rollback_policy.yaml
+
+adaptive_allocation:
+  enabled: true
+  mode: epsilon_greedy
+  epsilon: 0.1
+  min_allocation_pct: 0
+  max_challenger_allocation_pct: 30
+  reallocate_every_bars: 12
+  reward_metric: risk_adjusted_expectancy
+  live_enabled: false
+
+paths:
+  raw_dir: data/raw
+  features_dir: data/features
+  artifacts_dir: artifacts
+  reports_dir: reports
+
+log_level: INFO

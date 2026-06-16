@@ -1,0 +1,12 @@
+# Auto-rollback policy. If a promoted champion degrades, revert to the previous
+# (fallback) champion immediately — rollback is allowed DURING market hours.
+auto_rollback:
+  enabled: true
+  max_daily_loss_pct: 2.0
+  max_intraday_drawdown_pct: 2.5
+  max_consecutive_losses: 3
+  max_underperformance_vs_fallback_pct: 1.0
+  max_agent_errors_per_day: 3
+  max_data_errors_per_day: 3
+  rollback_to_previous_champion: true
+  freeze_promotions_after_rollback_days: 3
