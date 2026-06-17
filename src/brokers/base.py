@@ -43,6 +43,7 @@ class PositionInfo:
     symbol: str
     quantity: float
     avg_price: float
+    entry_commission: float = 0.0
 
 
 class BrokerBase(ABC):

@@ -7,6 +7,8 @@ the strategy logic has something real to chase.
 """
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pandas as pd
 
@@ -19,6 +21,12 @@ _LEVERAGE = {
     "SOXL": ("SMH", +3.0),
     "SOXS": ("SMH", -3.0),
 }
+
+
+def _stable_bucket(text: str, modulo: int) -> int:
+    """Stable per-symbol bucket; unlike Python hash(), reproducible per process."""
+    digest = hashlib.blake2b(text.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big") % modulo
 
 
 class SyntheticDataSource(DataSource):
@@ -47,12 +55,12 @@ class SyntheticDataSource(DataSource):
         """Per-bar log returns, sharing the underlying path for leveraged ETFs."""
         base, mult = _LEVERAGE.get(symbol, (symbol, 1.0))
         if base not in self._underlying_returns:
-            rng = np.random.default_rng(self.seed + abs(hash(base)) % 10_000)
+            rng = np.random.default_rng(self.seed + _stable_bucket(base, 10_000))
             # mild intraday drift + noise
             r = rng.normal(0.0, 0.0008, size=len(idx))
             self._underlying_returns[base] = pd.Series(r, index=idx)
         underlying = self._underlying_returns[base].reindex(idx).fillna(0.0).to_numpy()
-        rng2 = np.random.default_rng(self.seed + abs(hash(symbol)) % 10_000)
+        rng2 = np.random.default_rng(self.seed + _stable_bucket(symbol, 10_000))
         idiosyncratic = rng2.normal(0.0, 0.0003, size=len(idx))
         return underlying * mult + idiosyncratic
 
@@ -61,10 +69,10 @@ class SyntheticDataSource(DataSource):
         if len(idx) == 0:
             return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
         rets = self._returns_for(symbol, idx)
-        price0 = 50.0 + (abs(hash(symbol)) % 50)
+        price0 = 50.0 + _stable_bucket(symbol, 50)
         close = price0 * np.exp(np.cumsum(rets))
         open_ = np.concatenate([[price0], close[:-1]])
-        rng = np.random.default_rng(self.seed + abs(hash(symbol + "hl")) % 10_000)
+        rng = np.random.default_rng(self.seed + _stable_bucket(symbol + "hl", 10_000))
         wiggle = np.abs(rng.normal(0.0, 0.0004, size=len(idx))) * close
         high = np.maximum(open_, close) + wiggle
         low = np.minimum(open_, close) - wiggle
