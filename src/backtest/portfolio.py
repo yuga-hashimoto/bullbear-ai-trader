@@ -11,19 +11,20 @@ class Position:
     """An open long position in a tradable ETF.
 
     All ETFs are bought *long* — bearish views are expressed by buying an
-    inverse ETF (SQQQ/SOXS), never by shorting. ``peak_price`` tracks the best
+    inverse ETF (SQQQ/SOXS), never by shorting. peak_price tracks the best
     price seen for the trailing stop.
     """
 
     symbol: str
-    direction: str          # the signal direction backing the trade
+    direction: str
     entry_time: pd.Timestamp
-    entry_price: float      # all-in fill price (incl. costs)
+    entry_price: float
     shares: float
     entry_bar: int
     peak_price: float
     trade_id: int = 0
     entry_reason: str = ""
+    entry_commission: float = 0.0
 
     def update_peak(self, price: float) -> "Position":
         return replace(self, peak_price=max(self.peak_price, price))

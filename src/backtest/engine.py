@@ -303,6 +303,7 @@ class BacktestEngine:
             symbol=intent.symbol, direction=intent.signal.direction, entry_time=t,
             entry_price=fill.price, shares=fill.shares, entry_bar=i, peak_price=fill.price,
             trade_id=trade_id, entry_reason=intent.signal.reason or intent.signal.action,
+            entry_commission=fill.commission,
         )
         self.risk.on_open()
 
@@ -312,18 +313,23 @@ class BacktestEngine:
         fill = self.execution.fill_sell(ref_px, pos.shares)
         proceeds = fill.notional - fill.commission
         st.cash += proceeds
-        entry_cost = pos.shares * pos.entry_price
+        entry_notional = pos.shares * pos.entry_price
+        entry_notional = pos.shares * pos.entry_price
+        entry_cost = entry_notional + pos.entry_commission
+        total_fees = pos.entry_commission + fill.commission
+        net_pnl = proceeds - entry_cost
+        return_pct = (net_pnl / entry_cost * 100.0) if entry_cost > 0 else 0.0
         st.trades.append(ClosedTrade(
             trade_id=pos.trade_id, symbol=pos.symbol, direction=pos.direction,
             entry_time=pos.entry_time, exit_time=t, entry_price=pos.entry_price,
             exit_price=fill.price, shares=pos.shares,
-            gross_pnl=pos.shares * (fill.price - pos.entry_price), fees=fill.commission,
-            net_pnl=proceeds - entry_cost,
-            return_pct=(fill.price - pos.entry_price) / pos.entry_price * 100.0,
+            gross_pnl=pos.shares * (fill.price - pos.entry_price), fees=total_fees,
+            net_pnl=net_pnl,
+            return_pct=return_pct,
             holding_minutes=(t - pos.entry_time).total_seconds() / 60.0,
             entry_reason=pos.entry_reason, exit_reason=reason,
         ))
-        self.risk.on_close(pos.symbol, proceeds - entry_cost, i, st.cash)
+        self.risk.on_close(pos.symbol, net_pnl, i, st.cash)
         st.position = None
 
     def _signal_log(self, signal: Signal, accepted: bool, reason: str, trade_id: int | None) -> dict:
