@@ -12,6 +12,7 @@ reports/runs/*
 reports/latest
 reports/latest.json
 reports/runtime/*
+reports/runtime_backup_*/
 reports/registry/*
 reports/evolution/*
 reports/candidates/*
