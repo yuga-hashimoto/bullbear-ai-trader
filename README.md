@@ -186,7 +186,8 @@ python -m src.cli doctor --config config/default.yaml
 ```
 
 macOSで常駐させる場合は、同梱の `deploy/com.bullbear.paper.plist` を
-`~/Library/LaunchAgents/` に配置して `launchctl bootstrap` します。
+`~/Library/LaunchAgents/` に配置して `launchctl bootstrap` します。起動ラッパーは
+外付けボリュームのマウント完了を待つため、ログイン直後にSSDの認識が遅れてもRunnerを開始します。
 
 実売買は、6か月以上の連続ペーパー運用、100取引以上、Profit Factor 1.25以上、Sharpe 1.0以上、最大ドローダウン15%以下を満たしても自動解禁されません。
 

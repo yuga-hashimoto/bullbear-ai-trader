@@ -8,8 +8,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
-    <string>-lc</string>
-    <string>cd /Volumes/MOVESPEED/Documents/GitHub/bullbear-ai-trader &amp;&amp; exec .venv/bin/python -m src.cli run-paper --config config/default.yaml --agent external</string>
+    <string>/Users/yu-ga/Library/Application Support/BullBear/run-paper-launchd.sh</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
