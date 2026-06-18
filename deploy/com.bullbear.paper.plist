@@ -7,14 +7,9 @@
   <string>com.bullbear.paper</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Volumes/MOVESPEED/Documents/GitHub/bullbear-ai-trader/.venv/bin/python</string>
-    <string>-m</string>
-    <string>src.cli</string>
-    <string>run-paper</string>
-    <string>--config</string>
-    <string>config/default.yaml</string>
-    <string>--agent</string>
-    <string>external</string>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>cd /Volumes/MOVESPEED/Documents/GitHub/bullbear-ai-trader &amp;&amp; exec .venv/bin/python -m src.cli run-paper --config config/default.yaml --agent external</string>
   </array>
   <key>WorkingDirectory</key>
   <string>/Volumes/MOVESPEED/Documents/GitHub/bullbear-ai-trader</string>
