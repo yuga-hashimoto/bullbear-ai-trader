@@ -11,8 +11,6 @@
     <string>-lc</string>
     <string>cd /Volumes/MOVESPEED/Documents/GitHub/bullbear-ai-trader &amp;&amp; exec .venv/bin/python -m src.cli run-paper --config config/default.yaml --agent external</string>
   </array>
-  <key>WorkingDirectory</key>
-  <string>/Volumes/MOVESPEED/Documents/GitHub/bullbear-ai-trader</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
