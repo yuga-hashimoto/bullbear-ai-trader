@@ -38,6 +38,13 @@ class PaperBroker(BrokerBase):
     def get_positions(self) -> list[PositionInfo]:
         return list(self._positions.values())
 
+    def restore_account(self, cash: float, positions: list[PositionInfo]) -> None:
+        """Restore paper-only account state after a process restart."""
+        self._cash = float(cash)
+        self._positions = {position.symbol: position for position in positions}
+        for position in positions:
+            self._last_price.setdefault(position.symbol, position.avg_price)
+
     # -- orders -------------------------------------------------------------
     def submit_order(self, symbol: str, side: OrderSide, quantity: float, **kw) -> Order:
         ref = self._last_price.get(symbol)
@@ -68,6 +75,13 @@ class PaperBroker(BrokerBase):
             else:
                 fill = self._exec.fill_sell(ref, qty)
                 self._cash += fill.notional - fill.commission
+                entry_commission = pos.entry_commission * (qty / pos.quantity)
+                realized_pnl = (
+                    fill.notional
+                    - fill.commission
+                    - qty * pos.avg_price
+                    - entry_commission
+                )
                 remaining = pos.quantity - qty
                 if remaining > 1e-9:
                     self._positions[symbol] = PositionInfo(
@@ -78,7 +92,12 @@ class PaperBroker(BrokerBase):
                 order.status = OrderStatus.FILLED
                 order.fill_price = fill.price
                 order.quantity = qty
-                order.meta.update({"commission": fill.commission, "notional": fill.notional})
+                order.meta.update({
+                    "commission": fill.commission,
+                    "notional": fill.notional,
+                    "entry_commission": entry_commission,
+                    "realized_pnl": realized_pnl,
+                })
         self._orders[order.order_id] = order
         return order
 

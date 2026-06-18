@@ -61,6 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_config_arg(sub.add_parser("runner-status"))
     _add_config_arg(sub.add_parser("stop-runner"))
+    _add_config_arg(sub.add_parser("doctor"))
+    _add_config_arg(sub.add_parser("readiness"))
 
     p_live = sub.add_parser("run-live", help="(disabled) future live runner")
     _add_config_arg(p_live)
@@ -275,6 +277,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"stop_flag": str(flag),
                           "note": "runner will exit on its next loop"}, indent=2))
         return 0
+
+    if args.command in ("doctor", "readiness"):
+        from .ops.doctor import build_readiness
+
+        result = build_readiness(cfg)
+        print(json.dumps(result, indent=2, default=str))
+        return 0 if result["paper"]["ready"] else 1
 
     if args.command == "run-live":
         from .config.settings import LiveTradingDisabledError

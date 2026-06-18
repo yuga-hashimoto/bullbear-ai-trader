@@ -129,7 +129,10 @@ class RiskEngine:
         ret_pct = position.unrealized_pct(price) * 100.0
 
         # Force flat near the close (no overnight holds).
-        if minutes_to_close(now, session_close) <= c.force_close_minutes_before_close:
+        if (
+            not c.allow_overnight_positions
+            and minutes_to_close(now, session_close) <= c.force_close_minutes_before_close
+        ):
             return Decision(True, "force_close_before_close")
 
         if ret_pct <= -c.max_loss_per_trade_pct:

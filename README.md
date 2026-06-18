@@ -19,7 +19,7 @@ Engine, execution simulation, reporting and a read-only dashboard.
 
 ## 設計思想 / Design
 
-本システムは、5分ごとに最新データとニュース速報をチェックし、新規のニュースが発生したタイミングでのみAIに意思決定を仰ぐ設計になっています。
+本システムは、数値戦略をスクリプトで計算し、OpenCode APIはニュースの自然言語分析だけに使用します。AIは注文、数量、銘柄を直接決定しません。
 
 ```mermaid
 sequenceDiagram
@@ -37,7 +37,7 @@ sequenceDiagram
     
     alt 既読または新規のニュースが無い場合
         Note over S: AIへの問い合わせをスキップ
-        Note over S: シグナルを自動的に NO_TRADE に決定
+        Note over S: 数値戦略だけで候補を評価
     else 新規のニュース速報を検知した場合
         Note over S: 新規ニュースからプロンプトを構築
         S->>A: 市場情報 + ニュースを送信して推論依頼
@@ -170,14 +170,22 @@ Signal を受けて **ACCEPT / REJECT / FORCE_EXIT** を判定（`src/risk/engin
 
 ## ニュース速報トリガーによるAI呼び出し制御 (News-Triggered AI Execution)
 
-不要なAPIコールと課金を抑えるため、本システムは**「ニュース速報（新規のニュース）が検知された場合のみAIを呼び出す」**トリガー制御が組み込まれています。
+不要なAPIコールと課金を抑えるため、OpenCodeは新規ニュースが検知された場合だけ呼び出します。ニュースがない場合でも、注文候補は数値戦略が独立して評価します。
 
 - **実運用時 (PaperRunner)**:
   5分足の確定ごとに `yfinance` から関連インデックス（`QQQ`, `SMH` 等）のニュースを巡回取得し、まだ処理していない新規のニュースがある場合のみ OpenCode API (DeepSeek) に接続します。
 - **バックテスト時 (Backtest)**:
-  バックテスト過去データ実行時は、ダミーニュース等の発生はなくAPIコールは完全にゼロになり、すべて `NO_TRADE` として瞬時に処理されます。
+  過去データ実行時はOpenCodeを呼び出さず、数値戦略のみを評価します。
 - **重複排除**:
-  一度読み込んだニュースIDは `seen_news_ids` に保持され、同じニュースに対して重複してAIを呼び出すことはありません。
+  既読ニュースIDは `reports/runtime/news_state.json` に永続化され、再起動後も重複処理しません。
+
+運用前には必ず診断を実行してください。
+
+```bash
+python -m src.cli doctor --config config/default.yaml
+```
+
+実売買は、6か月以上の連続ペーパー運用、100取引以上、Profit Factor 1.25以上、Sharpe 1.0以上、最大ドローダウン15%以下を満たしても自動解禁されません。
 
 
 ## run 出力構成 / Report output

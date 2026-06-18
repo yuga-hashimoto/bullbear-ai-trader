@@ -80,6 +80,13 @@ class MarketConfig:
 
 
 @dataclass(frozen=True)
+class AccountConfig:
+    base_currency: str = "JPY"
+    initial_capital_jpy: float = 1_000_000.0
+    usd_jpy_rate: float = 150.0
+
+
+@dataclass(frozen=True)
 class RiskConfig:
     confidence_threshold: float = 0.65
     max_loss_per_trade_pct: float = 0.7
@@ -95,6 +102,12 @@ class RiskConfig:
     max_spread_pct: float = 0.15
     max_atr_pct: float = 5.0
     min_bars_between_same_symbol: int = 3
+    max_loss_per_trade_jpy: float = 10_000.0
+    max_daily_loss_jpy: float = 50_000.0
+    max_drawdown_pct: float = 15.0
+    max_portfolio_risk_pct: float = 3.0
+    overnight_gap_risk_pct: float = 5.0
+    allow_overnight_positions: bool = False
 
 
 @dataclass(frozen=True)
@@ -141,6 +154,7 @@ class Config:
     trading: TradingConfig
     runner: RunnerConfig
     market: MarketConfig
+    account: AccountConfig
     risk: RiskConfig
     costs: CostConfig
     backtest: BacktestConfig
@@ -176,6 +190,16 @@ def _validate(cfg: Config) -> None:
         raise ValueError("risk.confidence_threshold must be in [0, 1]")
     if cfg.strategy.max_concurrent_positions < 1:
         raise ValueError("max_concurrent_positions must be >= 1")
+    if cfg.account.base_currency != "JPY":
+        raise ValueError("account.base_currency must be JPY")
+    if cfg.account.initial_capital_jpy <= 0 or cfg.account.usd_jpy_rate <= 0:
+        raise ValueError("account capital and FX rate must be positive")
+    if cfg.risk.max_loss_per_trade_jpy <= 0 or cfg.risk.max_daily_loss_jpy <= 0:
+        raise ValueError("JPY risk limits must be positive")
+    if not (0 < cfg.risk.max_drawdown_pct < 100):
+        raise ValueError("risk.max_drawdown_pct must be in (0, 100)")
+    if not (0 < cfg.risk.max_portfolio_risk_pct <= cfg.risk.max_drawdown_pct):
+        raise ValueError("portfolio risk must be positive and no larger than max drawdown")
     if cfg.agent.type not in {"mock", "replay", "external", "local_model"}:
         raise ValueError(f"unknown agent.type: {cfg.agent.type}")
     for sym, spec in cfg.instruments.items():
@@ -229,6 +253,7 @@ def load_config(path: str | Path) -> Config:
         trading=trading,
         runner=RunnerConfig(**raw.get("runner", {})),
         market=MarketConfig(**raw.get("market", {})),
+        account=AccountConfig(**raw.get("account", {})),
         risk=RiskConfig(**raw.get("risk", {})),
         costs=CostConfig(**raw.get("costs", {})),
         backtest=BacktestConfig(**raw.get("backtest", {})),

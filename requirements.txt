@@ -6,6 +6,8 @@ pyarrow>=14.0  # parquet storage (CSV fallback exists if absent)
 
 # Data
 yfinance>=0.2.40
+requests>=2.31
+pandas-market-calendars>=4.4
 
 # Models
 scikit-learn>=1.3

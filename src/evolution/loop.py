@@ -16,7 +16,7 @@ from ..config.settings import Config
 from ..data.store import load_features
 from . import guardrails as gr
 from .bandit import ArmStats, Bandit
-from .challenger import CANARY, PROMOTED, Challenger
+from .challenger import CANARY, LIVE_ELIGIBLE, PROMOTED, Challenger
 from .champion import Champion
 from .drift_detector import detect_drift
 from .evaluator import robustness_check
@@ -45,6 +45,12 @@ def _reward(metric_name: str, m: dict[str, Any]) -> float:
 def promote_challenger(base_cfg: Config, registry: EvolutionRegistry, store: ExperimentStore,
                        challenger: Challenger, env: str, reasons: dict[str, Any]) -> bool:
     """Swap the challenger in as the new Champion (guardrail re-validated)."""
+    if challenger.status != LIVE_ELIGIBLE:
+        store.emit(EvolutionEventType.PROMOTION_FAILED, {
+            "challenger_id": challenger.challenger_id,
+            "reason": "not_live_eligible",
+        })
+        return False
     violations = gr.check_patch(challenger.config_patch, base_cfg)
     if violations:
         store.emit(EvolutionEventType.PROMOTION_FAILED,
@@ -157,6 +163,8 @@ def run_evolution_cycle(cfg: Config, env: str = "paper", agent_type: str | None 
         store.emit(EvolutionEventType.PROMOTION_EVALUATED,
                    {"challenger_id": chal.challenger_id, "passed": result.passed, "reasons": result.reasons})
         if result.passed:
+            chal.status = LIVE_ELIGIBLE
+            registry.update_challenger(chal)
             store.emit(EvolutionEventType.PROMOTION_PASSED, {"challenger_id": chal.challenger_id})
             passing.append((chal, result))
         else:

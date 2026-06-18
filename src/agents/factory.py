@@ -48,12 +48,17 @@ def make_agent(
         )
 
         try:
-            return ExternalAgentAdapter(cfg.agent)
+            analysis = ExternalAgentAdapter(
+                cfg.agent, state_dir=cfg.path("reports_dir") / "runtime"
+            )
+            from .hybrid_agent import HybridAnalysisAgent
+
+            return HybridAnalysisAgent(analysis)
         except ExternalAgentNotConfiguredError:
             if cfg.agent.fallback_to_no_trade:
                 from .mock_agent import MockAgent
 
-                log.warning("external agent not configured; falling back to MockAgent")
+                log.warning("external analysis not configured; using non-AI numeric agent")
                 return MockAgent()
             raise
 

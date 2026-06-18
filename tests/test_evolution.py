@@ -8,7 +8,7 @@ import pytest
 from src.evolution import guardrails as gr
 from src.evolution.bandit import ArmStats, Bandit
 from src.evolution.canary_runner import promote_to_canary
-from src.evolution.challenger import CANARY, PROMOTED, SHADOW
+from src.evolution.challenger import CANARY, DRAFT, LIVE_ELIGIBLE, PROMOTED, SHADOW
 from src.evolution.champion import PatchError, apply_patch
 from src.evolution.experiment_store import ExperimentStore
 from src.evolution.loop import promote_challenger, rollback_to_fallback
@@ -33,11 +33,11 @@ def test_champion_yaml_created(cfg, tmp_path):
     assert (tmp_path / "registry" / "champion.yaml").exists()
 
 
-def test_create_challenger_is_shadow(cfg, tmp_path):
+def test_create_challenger_is_draft(cfg, tmp_path):
     reg = EvolutionRegistry(tmp_path)
     reg.ensure_champion()
     chal = reg.create_challenger({"risk.confidence_threshold": 0.7}, source="manual")
-    assert chal.status == SHADOW
+    assert chal.status == DRAFT
     assert reg.list_challengers()[0].challenger_id == chal.challenger_id
 
 
@@ -45,7 +45,9 @@ def test_shadow_result_saved(cfg, labeled_matrix, tmp_path):
     cfg2 = _cfg_window(cfg)
     reg = EvolutionRegistry(tmp_path)
     reg.ensure_champion()
-    reg.create_challenger({"risk.confidence_threshold": 0.55}, source="manual")
+    chal = reg.create_challenger({"risk.confidence_threshold": 0.55}, source="manual")
+    chal.status = SHADOW
+    reg.update_challenger(chal)
     store = ExperimentStore(tmp_path)
     res = run_shadow(cfg2, reg, store, agent_type="mock", matrix=labeled_matrix, with_robustness=False)
     assert res["challengers"], "expected challenger shadow metrics"
@@ -57,6 +59,8 @@ def test_canary_promotion(cfg, tmp_path):
     reg = EvolutionRegistry(tmp_path)
     reg.ensure_champion()
     chal = reg.create_challenger({"risk.confidence_threshold": 0.6}, source="manual")
+    chal.status = SHADOW
+    reg.update_challenger(chal)
     store = ExperimentStore(tmp_path)
     assert promote_to_canary(reg, store, chal.challenger_id, allocation_pct=10)
     assert reg.get_challenger(chal.challenger_id).status == CANARY
@@ -70,15 +74,17 @@ def _champ():
 
 def _good_challenger():
     return {"win_rate_pct": 45.0, "expectancy": 0.01, "max_drawdown_pct": -8.0,
-            "profit_factor": 1.5, "num_trades": 50, "net_pnl_after_costs": 500.0,
-            "worst_day_pct": -1.0}
+            "profit_factor": 1.5, "num_trades": 120, "net_pnl_after_costs": 500.0,
+            "worst_day_pct": -1.0, "sharpe_ratio": 1.2, "paper_days": 190,
+            "recent_3m_net_pnl": 100.0, "sealed_oos_pass": True,
+            "forward_shadow_pass": True}
 
 
 def _good_rob():
     return {"overfitting_risk": "LOW", "out_of_sample_pass": True}
 
 
-def _eval(champ, chal, env="paper", ds=10, dc=5, rob=None):
+def _eval(champ, chal, env="paper", ds=10, dc=190, rob=None):
     return evaluate_promotion(champ, chal, env=env, days_shadow=ds, days_canary=dc,
                               policy=POLICY, robustness=rob or _good_rob())
 
@@ -118,7 +124,7 @@ def test_conditions_met_auto_promote_paper(cfg, tmp_path):
     reg.ensure_champion()
     chal = reg.create_challenger({"risk.confidence_threshold": 0.7}, source="manual")
     chal.metrics = _good_challenger()
-    chal.status = CANARY
+    chal.status = LIVE_ELIGIBLE
     reg.update_challenger(chal)
     store = ExperimentStore(tmp_path)
     assert promote_challenger(cfg, reg, store, chal, "paper", r.reasons)
@@ -223,7 +229,7 @@ def test_promotion_refuses_unsafe_patch(cfg, tmp_path):
     reg.ensure_champion()
     before = reg.load_champion().champion_id
     chal = reg.create_challenger({"risk.max_daily_loss_pct": 99.0}, source="manual")
-    chal.status = CANARY
+    chal.status = LIVE_ELIGIBLE
     chal.metrics = _good_challenger()
     reg.update_challenger(chal)
     store = ExperimentStore(tmp_path)

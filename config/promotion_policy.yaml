@@ -7,9 +7,11 @@ auto_promotion:
     paper: true
     live: false                          # live auto-promotion disabled initially
   min_shadow_days: 10
-  min_canary_days: 5
-  min_trades: 30
+  min_canary_days: 183
+  min_paper_days: 183
+  min_trades: 100
   min_profit_factor: 1.25
+  min_sharpe_ratio: 1.0
   min_win_rate_delta_vs_champion: 0.03
   min_expectancy_delta_vs_champion: 0.001
   max_drawdown_not_worse_than_champion: true

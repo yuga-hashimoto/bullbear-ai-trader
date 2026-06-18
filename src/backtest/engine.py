@@ -28,6 +28,7 @@ from ..agents.signal_schema import Signal, SignalValidationError, no_trade_signa
 from ..config.settings import Config
 from ..features.builder import feature_columns, price_col
 from ..risk.engine import EntryContext, RiskEngine
+from ..risk.sizing import PositionSizer, PositionSizingInput
 from ..strategy.strategy import Strategy, TradeIntent
 from ..utils.logging import get_logger
 from .execution import ExecutionModel
@@ -75,6 +76,7 @@ class BacktestEngine:
         self.strategy = Strategy(cfg)
         self.risk = RiskEngine(cfg.risk)
         self.execution = ExecutionModel(cfg.costs)
+        self.sizer = PositionSizer()
         self.allowed_symbols = set(cfg.symbols)
         self.context_symbols = cfg.all_symbols
 
@@ -104,7 +106,11 @@ class BacktestEngine:
         for i in range(n):
             t = timestamps[i]
             row = matrix.iloc[i]
+            is_end_of_data = i == n - 1
             is_last_of_day = (i == n - 1) or (timestamps[i + 1].date() != t.date())
+            must_close = is_end_of_data or (
+                is_last_of_day and not cfg.risk.allow_overnight_positions
+            )
 
             equity_now = self._equity(st, row)
             self.risk.maybe_roll_day(t, equity_now)
@@ -117,9 +123,9 @@ class BacktestEngine:
                 close_px = self._px(row, st.position.symbol, "close")
                 st.position = st.position.update_peak(close_px)
                 exit_dec = self.risk.check_exit(t, st.position, close_px, cfg.session_close)
-                if exit_dec.ok or is_last_of_day:
+                if exit_dec.ok or must_close:
                     reason = exit_dec.reason if exit_dec.ok else "force_close_eod"
-                    if is_last_of_day:
+                    if must_close:
                         self._close_position(st, t, i, close_px, reason)
                     elif st.pending_exit_reason is None:
                         st.pending_exit_reason = reason
@@ -155,6 +161,7 @@ class BacktestEngine:
             elif signal.action in ("BUY_BULL", "BUY_BEAR"):
                 decision, reason, accepted, trade_id_for_log = self._handle_entry(
                     st, t, i, row, signal, is_last_of_day
+                    if not cfg.risk.allow_overnight_positions else is_end_of_data
                 )
                 if not accepted:
                     rejected_count += 1
@@ -291,8 +298,29 @@ class BacktestEngine:
     def _open_position(
         self, st: _State, t: pd.Timestamp, i: int, intent: TradeIntent, trade_id: int, ref_px: float
     ) -> None:
-        deploy = min(st.cash * self.cfg.backtest.fraction_per_trade, st.cash)
-        fill = self.execution.fill_buy(ref_px, deploy)
+        stop_pct = min(self.cfg.risk.max_loss_per_trade_pct, 99.0)
+        stop_px = ref_px * (1.0 - stop_pct / 100.0)
+        portfolio_budget = (
+            self.cfg.account.initial_capital_jpy
+            * self.cfg.risk.max_portfolio_risk_pct
+            / 100.0
+        )
+        sizing = self.sizer.size(PositionSizingInput(
+            entry_price_usd=ref_px,
+            stop_price_usd=stop_px,
+            cash_usd=st.cash * self.cfg.backtest.fraction_per_trade,
+            usd_jpy=self.cfg.account.usd_jpy_rate,
+            max_trade_loss_jpy=self.cfg.risk.max_loss_per_trade_jpy,
+            portfolio_risk_remaining_jpy=portfolio_budget,
+            overnight_gap_pct=(
+                self.cfg.risk.overnight_gap_risk_pct
+                if self.cfg.risk.allow_overnight_positions
+                else 0.0
+            ),
+        ))
+        if sizing.quantity <= 0:
+            return
+        fill = self.execution.fill_buy_quantity(ref_px, sizing.quantity)
         if fill.shares <= 0:
             return
         cost = fill.notional + fill.commission
@@ -304,6 +332,8 @@ class BacktestEngine:
             entry_price=fill.price, shares=fill.shares, entry_bar=i, peak_price=fill.price,
             trade_id=trade_id, entry_reason=intent.signal.reason or intent.signal.action,
             entry_commission=fill.commission,
+            stop_price=stop_px,
+            planned_loss_jpy=sizing.planned_loss_jpy,
         )
         self.risk.on_open()
 

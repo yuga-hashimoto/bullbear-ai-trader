@@ -60,6 +60,22 @@ def test_force_close_eod_with_loose_risk(cfg, labeled_matrix):
     assert result.counters["forced_exits"] >= 1
 
 
+def test_overnight_positions_can_span_sessions(cfg, labeled_matrix):
+    loose = RiskConfig(
+        confidence_threshold=0.0, max_loss_per_trade_pct=99.0, take_profit_pct=999.0,
+        trailing_stop_pct=999.0, max_daily_loss_pct=999.0, max_trades_per_day=999,
+        max_consecutive_losses=999, max_holding_minutes=999999, no_trade_first_minutes=0,
+        no_new_entry_last_minutes=0, force_close_minutes_before_close=5,
+        max_spread_pct=999.0, max_atr_pct=999.0, min_bars_between_same_symbol=0,
+        allow_overnight_positions=True,
+    )
+    cfg_overnight = dataclasses.replace(cfg, risk=loose)
+
+    result = BacktestEngine(cfg_overnight, _bull_agent()).run(labeled_matrix)
+
+    assert any(t.entry_time.date() < t.exit_time.date() for t in result.trades)
+
+
 def test_reproducible(cfg, labeled_matrix):
     r1 = BacktestEngine(cfg, _bull_agent()).run(labeled_matrix)
     r2 = BacktestEngine(cfg, _bull_agent()).run(labeled_matrix)

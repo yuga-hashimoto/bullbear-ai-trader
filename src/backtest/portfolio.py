@@ -25,6 +25,8 @@ class Position:
     trade_id: int = 0
     entry_reason: str = ""
     entry_commission: float = 0.0
+    stop_price: float | None = None
+    planned_loss_jpy: float = 0.0
 
     def update_peak(self, price: float) -> "Position":
         return replace(self, peak_price=max(self.peak_price, price))

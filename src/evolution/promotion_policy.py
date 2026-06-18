@@ -19,8 +19,10 @@ _DEFAULTS = {
     "environment_allowed": {"paper": True, "live": False},
     "min_shadow_days": 10,
     "min_canary_days": 5,
-    "min_trades": 30,
+    "min_trades": 100,
+    "min_paper_days": 183,
     "min_profit_factor": 1.25,
+    "min_sharpe_ratio": 1.0,
     "min_win_rate_delta_vs_champion": 0.03,
     "min_expectancy_delta_vs_champion": 0.001,
     "max_drawdown_not_worse_than_champion": True,
@@ -68,8 +70,13 @@ def evaluate_promotion(
     reasons["environment_allowed"] = bool(policy.get("environment_allowed", {}).get(env, False))
     reasons["min_shadow_days"] = days_shadow >= policy["min_shadow_days"]
     reasons["min_canary_days"] = days_canary >= policy["min_canary_days"]
+    reasons["min_paper_days"] = ch.get("paper_days", days_canary) >= policy["min_paper_days"]
     reasons["min_trades"] = ch.get("num_trades", 0) >= policy["min_trades"]
     reasons["min_profit_factor"] = ch.get("profit_factor", 0.0) >= policy["min_profit_factor"]
+    reasons["min_sharpe"] = ch.get("sharpe_ratio", 0.0) >= policy["min_sharpe_ratio"]
+    reasons["recent_3m_positive"] = ch.get("recent_3m_net_pnl", 0.0) > 0
+    reasons["sealed_oos_pass"] = bool(ch.get("sealed_oos_pass", False))
+    reasons["forward_shadow_pass"] = bool(ch.get("forward_shadow_pass", False))
 
     wr_delta = (ch.get("win_rate_pct", 0.0) - c.get("win_rate_pct", 0.0)) / 100.0
     reasons["win_rate_delta"] = wr_delta >= policy["min_win_rate_delta_vs_champion"]

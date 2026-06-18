@@ -109,6 +109,16 @@ def test_force_close_before_close(cfg, frames, tmp_path):
     assert r.position is None
 
 
+def test_overnight_setting_skips_force_close(cfg, frames, tmp_path):
+    risk = dataclasses.replace(cfg.risk, allow_overnight_positions=True)
+    cfg2 = dataclasses.replace(_cfg(cfg, tmp_path), risk=risk)
+    r = _runner(cfg2, ConstantSignalAgent("NO_TRADE"), frames)
+
+    session = r.calendar.session_for_date(_dt(15, 57).date())
+
+    assert r._should_force_close(_dt(15, 57), session) is False
+
+
 def test_stale_data_no_trade(cfg, frames, tmp_path):
     # Feed only old bars (up to Jan 3) while "now" is Jan 10 -> stale.
     old = {s: df[df.index <= pd.Timestamp("2024-01-03 16:00", tz=ET)] for s, df in frames.items()}

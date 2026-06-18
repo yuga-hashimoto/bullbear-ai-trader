@@ -48,6 +48,15 @@ class ExecutionModel:
         commission = self._commission(shares, notional)
         return Fill(price, shares, commission, notional)
 
+    def fill_buy_quantity(self, ref_price: float, shares: float) -> Fill:
+        price = self._adverse(ref_price, "buy")
+        if price <= 0 or shares <= 0:
+            return Fill(price, 0.0, 0.0, 0.0)
+        shares = float(int(shares))
+        notional = shares * price
+        commission = self._commission(shares, notional)
+        return Fill(price, shares, commission, notional)
+
     def fill_sell(self, ref_price: float, shares: float) -> Fill:
         price = self._adverse(ref_price, "sell")
         notional = shares * price

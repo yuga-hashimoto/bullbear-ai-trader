@@ -23,17 +23,18 @@ from ..agents.base import BaseAgent
 from ..agents.context import ContextInputs
 from ..agents.signal_schema import Signal, SignalValidationError, no_trade_signal
 from ..backtest.portfolio import Position
-from ..brokers.base import OrderSide, OrderStatus
+from ..brokers.base import OrderSide, OrderStatus, PositionInfo
 from ..brokers.paper_broker import PaperBroker
 from ..config.settings import Config
 from ..features.builder import build_feature_matrix, feature_columns, price_col
 from ..market.calendar import MarketCalendar, make_calendar
 from ..market.sessions import MarketState, to_zone
 from ..risk.engine import EntryContext, RiskEngine
+from ..risk.sizing import PositionSizer, PositionSizingInput
 from ..strategy.strategy import Strategy
 from ..utils.logging import get_logger
 from .base import BaseRunner, clear_stop_flag
-from .feed import MarketDataFeed, SyntheticLiveFeed
+from .feed import MarketDataFeed, make_live_feed
 from .heartbeat import EventType, HeartbeatError
 from .scheduler import bar_floor, interval_to_seconds, next_bar_boundary, seconds_until
 
@@ -59,10 +60,11 @@ class PaperRunner(BaseRunner):
         self.interval = cfg.runner.interval
         self.interval_s = interval_to_seconds(self.interval)
         self.calendar = calendar or make_calendar(cfg.market.calendar, self.tz)
-        self.feed = feed or SyntheticLiveFeed(tz=self.tz, seed=cfg.backtest.random_seed)
+        self.feed = feed or make_live_feed(cfg)
         self.broker = broker or PaperBroker(cash=cfg.backtest.initial_cash, costs=cfg.costs)
         self.strategy = Strategy(cfg)
         self.risk = RiskEngine(cfg.risk)
+        self.sizer = PositionSizer()
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.sleeper = sleeper or _time.sleep
 
@@ -81,9 +83,12 @@ class PaperRunner(BaseRunner):
         self.daily_stop = False
         self.day_start_equity = cfg.backtest.initial_cash
         self.trade_seq = 0
+        self.current_bar = 0
         self._current_day = None
         self._open_announced = None
         self._broker_disabled = False
+        self.peak_equity = cfg.backtest.initial_cash
+        self._restore_state()
 
     # ================================================================= run
     def run(self) -> None:
@@ -160,6 +165,13 @@ class PaperRunner(BaseRunner):
         self.writer.emit(EventType.FEATURE_BUILT, {"bar": str(matrix.index[-1])})
         for sym in self.symbols:
             self.broker.set_price(sym, float(row[price_col(sym, "close")]))
+
+        self.current_bar += 1
+        self._check_runtime_circuit_breakers(now)
+        if self.daily_stop:
+            self.last_processed_bar = bar_time
+            self._heartbeat(now, "stopped", state, session, reason="risk_circuit_breaker")
+            return {"action": "risk_stop", "state": state.value, "bar": str(bar_time)}
 
         session_close_str = session.close_dt.strftime("%H:%M")
         self._manage_exit(now, row, session, session_close_str)
@@ -246,7 +258,7 @@ class PaperRunner(BaseRunner):
         ctx = EntryContext(
             now=pd.Timestamp(now), equity=self.broker.get_cash(),
             spread_pct=self.cfg.costs.spread_pct, atr_pct=atr_pct,
-            n_open_positions=0, candidate_symbol=intent.symbol, current_bar=0,
+            n_open_positions=0, candidate_symbol=intent.symbol, current_bar=self.current_bar,
             session_open=self.cfg.market.regular_open, session_close=session.close_dt.strftime("%H:%M"),
             max_concurrent=self.cfg.strategy.max_concurrent_positions,
         )
@@ -263,8 +275,27 @@ class PaperRunner(BaseRunner):
             self.writer.emit(EventType.ORDER_REJECTED, {"reason": "broker_disabled"})
             return
         ref = float(row[price_col(intent.symbol, "close")])
-        equity = self.broker.get_cash()
-        target_shares = int(equity * self.cfg.backtest.fraction_per_trade / (ref * 1.01))
+        stop_pct = min(self.cfg.risk.max_loss_per_trade_pct, 99.0)
+        stop_px = ref * (1.0 - stop_pct / 100.0)
+        portfolio_budget = (
+            self.cfg.account.initial_capital_jpy
+            * self.cfg.risk.max_portfolio_risk_pct
+            / 100.0
+        )
+        sizing = self.sizer.size(PositionSizingInput(
+            entry_price_usd=ref,
+            stop_price_usd=stop_px,
+            cash_usd=self.broker.get_cash() * self.cfg.backtest.fraction_per_trade,
+            usd_jpy=self.cfg.account.usd_jpy_rate,
+            max_trade_loss_jpy=self.cfg.risk.max_loss_per_trade_jpy,
+            portfolio_risk_remaining_jpy=portfolio_budget,
+            overnight_gap_pct=(
+                self.cfg.risk.overnight_gap_risk_pct
+                if self.cfg.risk.allow_overnight_positions
+                else 0.0
+            ),
+        ))
+        target_shares = sizing.quantity
         self.writer.emit(EventType.ORDER_INTENT,
                          {"symbol": intent.symbol, "side": "BUY", "shares": target_shares})
         if target_shares <= 0:
@@ -287,6 +318,9 @@ class PaperRunner(BaseRunner):
             entry_price=pos_info.avg_price, shares=pos_info.quantity, entry_bar=0,
             peak_price=pos_info.avg_price, trade_id=self.trade_seq,
             entry_reason=signal.reason or signal.action,
+            entry_commission=pos_info.entry_commission,
+            stop_price=stop_px,
+            planned_loss_jpy=sizing.planned_loss_jpy,
         )
         self.risk.on_open()
         self.last_order_time = pd.Timestamp(now).isoformat()
@@ -306,9 +340,13 @@ class PaperRunner(BaseRunner):
             self._disable_broker(f"close failed: {exc}")
             return
         exit_px = order.fill_price if order and order.fill_price else ref_px
-        net = pos.shares * (exit_px - pos.entry_price)
+        net = float(
+            order.meta.get("realized_pnl")
+            if order is not None and "realized_pnl" in order.meta
+            else pos.shares * (exit_px - pos.entry_price) - pos.entry_commission
+        )
         self.position = None
-        self.risk.on_close(pos.symbol, net, 0, self.broker.get_cash())
+        self.risk.on_close(pos.symbol, net, self.current_bar, self.broker.get_cash())
         self.last_order_time = pd.Timestamp(now).isoformat()
         is_force = reason.startswith("force_close")
         self.writer.emit(EventType.FORCE_EXIT if is_force else EventType.POSITION_CLOSED,
@@ -377,6 +415,8 @@ class PaperRunner(BaseRunner):
         self.writer.write_json("latest_risk_decision.json", rec)
 
     def _should_force_close(self, now, session) -> bool:
+        if self.cfg.risk.allow_overnight_positions:
+            return False
         mins = self.cfg.market.early_close_force_exit_minutes_before_close if session.is_early_close \
             else self.cfg.risk.force_close_minutes_before_close
         return session.minutes_to_close(now) <= mins
@@ -390,6 +430,52 @@ class PaperRunner(BaseRunner):
                              {"consecutive_losses": self.risk.consecutive_losses,
                               "halted": self.risk.halted_today})
 
+    def _marked_equity(self) -> float:
+        equity = self.broker.get_cash()
+        broker_positions = self.broker.get_positions()
+        for pos in broker_positions:
+            price = self.broker.get_market_data(pos.symbol).get("last", pos.avg_price)
+            equity += pos.quantity * price
+        if self.position is not None and not any(
+            pos.symbol == self.position.symbol for pos in broker_positions
+        ):
+            price = self.broker.get_market_data(self.position.symbol).get(
+                "last", self.position.entry_price
+            )
+            equity += self.position.shares * price
+        return equity
+
+    def _check_runtime_circuit_breakers(self, now) -> None:
+        equity = self._marked_equity()
+        self.peak_equity = max(self.peak_equity, equity)
+        daily_loss_jpy = max(self.day_start_equity - equity, 0.0) * self.cfg.account.usd_jpy_rate
+        drawdown_pct = (
+            (self.peak_equity - equity) / self.peak_equity * 100.0
+            if self.peak_equity > 0
+            else 0.0
+        )
+        if (
+            daily_loss_jpy < self.cfg.risk.max_daily_loss_jpy
+            and drawdown_pct < self.cfg.risk.max_drawdown_pct
+        ):
+            return
+        reason = (
+            "max_daily_loss_jpy"
+            if daily_loss_jpy >= self.cfg.risk.max_daily_loss_jpy
+            else "max_drawdown_pct"
+        )
+        self.daily_stop = True
+        if self.position is not None:
+            ref = self.broker.get_market_data(self.position.symbol).get(
+                "last", self.position.entry_price
+            )
+            self._close_position(now, float(ref), reason)
+        self.writer.emit(EventType.DAILY_STOP, {
+            "reason": reason,
+            "daily_loss_jpy": round(daily_loss_jpy, 2),
+            "drawdown_pct": round(drawdown_pct, 4),
+        })
+
     def _roll_day(self, now) -> None:
         d = now.date()
         if d != self._current_day:
@@ -397,9 +483,54 @@ class PaperRunner(BaseRunner):
                 self.position.shares * self.position.entry_price if self.position else 0.0)
             self.risk.new_day(equity, d)
             self.day_start_equity = equity
+            self.peak_equity = max(self.peak_equity, equity)
             self.daily_stop = False
             self._current_day = d
             self._open_announced = None
+
+    def _restore_state(self) -> None:
+        daily = self.writer.read_json("daily_state.json")
+        position_data = self.writer.read_json("runner_position.json")
+        if not daily:
+            return
+        self.day_start_equity = float(
+            daily.get("day_start_equity", self.cfg.backtest.initial_cash)
+        )
+        self.peak_equity = float(daily.get("peak_equity", self.day_start_equity))
+        self.daily_stop = bool(daily.get("daily_stop", False))
+        self.risk.trades_today = int(daily.get("trades_today", 0))
+        self.risk.consecutive_losses = int(daily.get("consecutive_losses", 0))
+        date_text = daily.get("date")
+        if date_text and date_text != "None":
+            self._current_day = pd.Timestamp(date_text).date()
+            self.risk._current_day = self._current_day
+            self.risk.day_start_equity = self.day_start_equity
+
+        positions: list[PositionInfo] = []
+        if position_data:
+            self.position = Position(
+                symbol=str(position_data["symbol"]),
+                direction=str(position_data["direction"]),
+                entry_time=pd.Timestamp(position_data["entry_time"]),
+                entry_price=float(position_data["entry_price"]),
+                shares=float(position_data["shares"]),
+                entry_bar=int(position_data.get("entry_bar", 0)),
+                peak_price=float(position_data.get("peak_price", position_data["entry_price"])),
+                trade_id=int(position_data.get("trade_id", 0)),
+                entry_reason=str(position_data.get("entry_reason", "")),
+                entry_commission=float(position_data.get("entry_commission", 0.0)),
+                stop_price=position_data.get("stop_price"),
+                planned_loss_jpy=float(position_data.get("planned_loss_jpy", 0.0)),
+            )
+            positions.append(PositionInfo(
+                self.position.symbol,
+                self.position.shares,
+                self.position.entry_price,
+                self.position.entry_commission,
+            ))
+            self.trade_seq = max(self.trade_seq, self.position.trade_id)
+            self.current_bar = max(self.current_bar, self.position.entry_bar)
+        self.broker.restore_account(float(daily.get("cash", self.broker.get_cash())), positions)
 
     def _fetch(self, now) -> dict[str, pd.DataFrame]:
         return self.feed.fetch_recent(self.context_symbols, self.interval, now)
@@ -446,7 +577,13 @@ class PaperRunner(BaseRunner):
             "last_signal_time": self.last_signal_time,
             "last_order_time": self.last_order_time,
             "positions": [p.__dict__ for p in self.broker.get_positions()],
-            "daily_pnl": round(self.broker.get_cash() - self.day_start_equity, 2),
+            "daily_pnl": round(self._marked_equity() - self.day_start_equity, 2),
+            "daily_pnl_jpy": round(
+                (self._marked_equity() - self.day_start_equity)
+                * self.cfg.account.usd_jpy_rate,
+                2,
+            ),
+            "peak_equity": round(self.peak_equity, 2),
             "trades_today": self.risk.trades_today,
             "consecutive_losses": self.risk.consecutive_losses,
             "daily_stop": self.daily_stop,
@@ -463,7 +600,13 @@ class PaperRunner(BaseRunner):
             "date": str(self._current_day),
             "day_start_equity": self.day_start_equity,
             "cash": self.broker.get_cash(),
+            "marked_equity": self._marked_equity(),
+            "peak_equity": self.peak_equity,
             "trades_today": self.risk.trades_today,
             "consecutive_losses": self.risk.consecutive_losses,
             "daily_stop": self.daily_stop,
         })
+        self.writer.write_json(
+            "runner_position.json",
+            self.position.__dict__ if self.position is not None else None,
+        )

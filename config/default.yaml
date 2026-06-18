@@ -35,18 +35,18 @@ instruments:
 # --- Data -------------------------------------------------------------------
 data_source: yfinance        # yfinance | moomoo | synthetic
 interval: 5m                 # 1m | 5m | 15m (5m prioritized initially)
-start_date: "2024-01-01"
-end_date: "2024-06-30"
+start_date: "2026-04-20"
+end_date: "2026-06-17"
 timezone: America/New_York
 # Regular US cash session (exchange local time).
 session_open: "09:30"
 session_close: "16:00"
 
 # --- Train / Test split (time-based, no shuffling) --------------------------
-train_start: "2024-01-01"
-train_end: "2024-04-30"
-test_start: "2024-05-01"
-test_end: "2024-06-30"
+train_start: "2026-04-20"
+train_end: "2026-05-29"
+test_start: "2026-06-01"
+test_end: "2026-06-16"
 
 # Walk-forward validation (used by `backtest --walk-forward`).
 walk_forward:
@@ -66,7 +66,7 @@ labeling:
 # The agent only PROPOSES trades via a standard Signal JSON. It never places
 # orders. type: mock | replay | external | local_model.
 agent:
-  type: mock
+  type: external
   endpoint: null               # required for type: external (e.g. http URL)
   signal_file: null            # JSONL path for type: replay
   transport: http              # http | command | mcp | file | stdio | websocket
@@ -83,8 +83,13 @@ model_params:
 
 # --- Strategy (thin signal->intent mapping; NO AI here) ---------------------
 strategy:
-  max_concurrent_positions: 1 # design supports up to 2
+  max_concurrent_positions: 4
   expected_return_weight: 1.0
+
+account:
+  base_currency: JPY
+  initial_capital_jpy: 1000000
+  usd_jpy_rate: 150.0
 
 # --- Risk engine (AUTHORITATIVE over the agent; NO_TRADE is the safe default) -
 risk:
@@ -102,12 +107,18 @@ risk:
   max_spread_pct: 0.15             # skip if quoted spread wider than this
   max_atr_pct: 5.0                 # skip if ATR% (volatility) too high
   min_bars_between_same_symbol: 3  # cooldown after exiting a symbol
+  max_loss_per_trade_jpy: 10000
+  max_daily_loss_jpy: 50000
+  max_drawdown_pct: 15.0
+  max_portfolio_risk_pct: 3.0
+  overnight_gap_risk_pct: 5.0
+  allow_overnight_positions: true
 
 # --- Backtest / execution costs ---------------------------------------------
 backtest:
-  initial_cash: 10000.0
-  position_sizing: fixed_fraction
-  fraction_per_trade: 1.0          # fraction of equity per single position
+  initial_cash: 6666.67            # USD equivalent of 1,000,000 JPY at configured FX
+  position_sizing: risk_budget
+  fraction_per_trade: 1.0          # hard cash cap; risk sizing is authoritative
   fill_model: next_bar_open        # decide at bar close, fill at next bar open
   random_seed: 42
 
