@@ -30,6 +30,7 @@ from src.reports.loader import (
     load_evolution,
     load_run,
     load_runtime,
+    load_runtime_performance,
 )
 
 st.set_page_config(page_title="BullBear AI トレーダー", layout="wide")
@@ -174,10 +175,11 @@ def render_status_tab(reports_dir: str, config_path: str) -> None:
         except Exception:
             pass
             
-    current_cash = initial_cash + daily_pnl
+    performance = load_runtime_performance(reports_dir, initial_cash)
+    current_cash = performance["current_equity"]
     
     c1, c2, c3 = st.columns(3)
-    c1.metric("💰 現在のお金（運用元本＋本日の損益）", f"${current_cash:,.2f}")
+    c1.metric("💰 現在のペーパー資産", f"${current_cash:,.2f}")
     
     # PnL color logic
     pnl_str = f"+${daily_pnl:,.2f}" if daily_pnl >= 0 else f"-${abs(daily_pnl):,.2f}"
@@ -192,11 +194,15 @@ def render_status_tab(reports_dir: str, config_path: str) -> None:
     else:
         for p in pos:
             direction_label = "値上がり狙い（買い）" if p.get("direction") == "BULL" else "値下がり狙い（空売り）"
+            entry_px = p.get("entry_price")
+            entry_px_str = f"${entry_px:,.2f}" if entry_px is not None else "不明"
+            unrealized = p.get("unrealized_pct")
+            unrealized_str = f"{unrealized:+.2f}%" if unrealized is not None else "不明"
             st.info(
                 f"**持ち株:** {p.get('symbol')} | "
                 f"**取引の方向:** {direction_label} | "
-                f"**購入価格:** ${p.get('entry_price'):,.2f} | "
-                f"**現在の損益割合:** {p.get('unrealized_pct')}%"
+                f"**購入価格:** {entry_px_str} | "
+                f"**現在の損益割合:** {unrealized_str}"
             )
 
     # 4. Latest AI decision
@@ -213,7 +219,15 @@ def render_status_tab(reports_dir: str, config_path: str) -> None:
         with sc1:
             st.markdown(f"**【AIの提案】**\n### {action_translated}")
             st.markdown(f"**対象銘柄:** {latest_sig.get('symbol') or 'なし'}")
-            st.markdown(f"**予測の自信度:** {int(float(latest_sig.get('confidence', 0)) * 100)}%")
+            
+            confidence = latest_sig.get("confidence")
+            confidence_pct = 0
+            if confidence is not None:
+                try:
+                    confidence_pct = int(float(confidence) * 100)
+                except Exception:
+                    pass
+            st.markdown(f"**予測の自信度:** {confidence_pct}%")
         with sc2:
             st.markdown("**【AIがこの判断を下した理由】**")
             st.success(latest_sig.get("reason", "理由は特に記載されていません。"))
@@ -226,7 +240,8 @@ def render_performance_tab(run: RunData | None) -> None:
 
     m = run.metrics
     
-    st.markdown("### 📊 トータル運用成績のまとめ")
+    st.markdown("### 📊 最新バックテストの成績")
+    st.caption("これは過去データでの検証結果です。現在稼働中のペーパー損益ではありません。")
     
     c1, c2, c3, c4 = st.columns(4)
     # Total return
@@ -304,7 +319,7 @@ def render_diary_tab(reports_dir: str) -> None:
         st.write(f"**{t_str}** | {icon} {msg}")
 
 # --- TAB 4: 🧬 AIの自動成長 (ABテスト状況) ---
-def render_evolution_tab(reports_dir: str) -> None:
+def render_evolution_tab(reports_dir: str, initial_cash: float) -> None:
     evo = load_evolution(reports_dir)
     champ = evo["champion"]
     
@@ -314,18 +329,31 @@ def render_evolution_tab(reports_dir: str) -> None:
 
     champ_id = champ.get('champion_id', 'Base_Model')
     champ_nickname = get_nickname(champ_id)
-    metrics = champ.get('metrics', {}) or {}
+    performance = load_runtime_performance(reports_dir, initial_cash)
 
     st.markdown("### 🏆 現在の本命AI（正式採用中の設定）")
     c1, c2, c3 = st.columns(3)
     c1.info(f"**本命AIの愛称:**\n### {champ_nickname}")
     
-    # Show return delta
-    total_ret = float(metrics.get("total_return_pct", 0.0))
-    c2.metric("💹 トータルの利益率", f"{total_ret:+.2f}%")
+    total_ret = performance["total_return_pct"]
+    c2.metric(
+        "💹 ペーパー運用の利益率（リアルタイム）",
+        f"{total_ret:+.2f}%",
+        delta=performance["total_pnl"],
+    )
     
-    win_rate = float(metrics.get("win_rate_pct", 0.0))
-    c3.metric("🎯 勝率", f"{win_rate:.1f}%")
+    win_rate = performance["win_rate_pct"]
+    win_rate_text = "—" if win_rate is None else f"{win_rate:.1f}%"
+    c3.metric(
+        "🎯 ペーパー決済勝率",
+        win_rate_text,
+        help=f"決済済み {performance['closed_trades']} 取引から計算",
+    )
+    st.caption(
+        f"現在資産 ${performance['current_equity']:,.2f} / "
+        f"累計損益 {performance['total_pnl']:+,.2f} USD / "
+        f"本日損益 {performance['daily_pnl']:+,.2f} USD"
+    )
 
     st.markdown("---")
     st.markdown("### ⚔️ 裏側で仮想テスト中の「挑戦者AI」たち (ABテスト)")
@@ -412,7 +440,7 @@ def main() -> None:
     with tabs[2]:
         render_diary_tab(reports_dir)
     with tabs[3]:
-        render_evolution_tab(reports_dir)
+        render_evolution_tab(reports_dir, initial_cash)
 
 if __name__ == "__main__":
     main()
