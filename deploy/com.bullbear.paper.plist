@@ -20,9 +20,9 @@
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardOutPath</key>
-  <string>/Volumes/MOVESPEED/Documents/GitHub/bullbear-ai-trader/reports/runtime/launchd.stdout.log</string>
+  <string>/Users/yu-ga/Library/Logs/bullbear-paper.stdout.log</string>
   <key>StandardErrorPath</key>
-  <string>/Volumes/MOVESPEED/Documents/GitHub/bullbear-ai-trader/reports/runtime/launchd.stderr.log</string>
+  <string>/Users/yu-ga/Library/Logs/bullbear-paper.stderr.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PYTHONUNBUFFERED</key>
