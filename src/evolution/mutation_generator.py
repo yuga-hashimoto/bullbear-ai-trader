@@ -31,13 +31,58 @@ def _sample_value(key: str, rng: random.Random) -> Any:
 
 
 def propose_patch(base_cfg: Config, rng: random.Random, k: int = 2) -> dict[str, Any]:
-    """Propose a guardrail-valid patch mutating up to ``k`` parameters."""
+    """Propose a guardrail-valid patch mutating up to ``k`` parameters, basing them on the current Champion's patch."""
+    from .registry import EvolutionRegistry
+    reports_dir = base_cfg.path("reports_dir")
+    registry = EvolutionRegistry(reports_dir)
+    
+    current_patch = {}
+    try:
+        champ = registry.load_champion()
+        if champ and champ.config_patch:
+            current_patch = champ.config_patch
+    except Exception:
+        pass  # If no champion exists yet, fallback to base config
+
+    # Helper to get parameter value from Champion or Base Config
+    def get_base_value(key: str) -> Any:
+        if key in current_patch:
+            return current_patch[key]
+        parts = key.split(".", 1)
+        if len(parts) == 2:
+            section, name = parts[0], parts[1]
+            if section == "risk":
+                return getattr(base_cfg.risk, name, None)
+            elif section == "strategy":
+                return getattr(base_cfg.strategy, name, None)
+        return None
+
     for _ in range(20):  # retry until a safe patch is produced
         keys = rng.sample(_MUTABLE, k=min(k, len(_MUTABLE)))
-        patch = {key: _sample_value(key, rng) for key in keys}
+        patch = {}
+        for key in keys:
+            base_val = get_base_value(key)
+            if base_val is not None:
+                lo, hi = gr.PARAM_BOUNDS[key]
+                span = hi - lo
+                # Mutate slightly (+/- 15% of total span) around the current champion's value
+                noise = rng.uniform(-0.15 * span, 0.15 * span)
+                mutated_val = base_val + noise
+                mutated_val = max(lo, min(hi, mutated_val))
+                
+                if key in _INT_PARAMS:
+                    patch[key] = int(round(mutated_val))
+                else:
+                    patch[key] = round(mutated_val, 3)
+            else:
+                patch[key] = _sample_value(key, rng)
+                
         if gr.is_safe(patch, base_cfg):
-            return patch
-    return {}  # could not produce a safe patch (shouldn't happen with these bounds)
+            # Check if merged with current champion remains safe
+            merged_patch = {**current_patch, **patch}
+            if gr.is_safe(merged_patch, base_cfg):
+                return patch
+    return {}  # could not produce a safe patch
 
 
 def generate_mutations(

@@ -38,6 +38,7 @@ class AgentConfig:
     transport: str = "http"       # http | command | mcp | file | stdio | websocket
     timeout_seconds: int = 30
     fallback_to_no_trade: bool = True
+    model: str = "deepseek-v4-flash"
 
 
 @dataclass(frozen=True)

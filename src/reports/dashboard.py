@@ -1,28 +1,29 @@
-"""Streamlit dashboard for backtest results (READ-ONLY).
+"""Streamlit dashboard for BullBear AI Trader (READ-ONLY / BEGINNER-FRIENDLY).
 
-Launch:
-    streamlit run src/reports/dashboard.py
-Optionally point at a reports dir:
-    BULLBEAR_REPORTS_DIR=reports streamlit run src/reports/dashboard.py
-
-This UI is for VIEWING backtest results only. It deliberately contains NO order
-buttons, NO live-trading toggle and NO broker controls. It cannot place trades.
+This UI is designed to be extremely simple and clear for stock trading beginners.
+It avoids complex jargon and focuses on:
+  1. What is the AI doing right now?
+  2. How much money do we have?
+  3. What are the results so far?
 """
 from __future__ import annotations
 
 import os
 import sys
+import yaml
+import subprocess
+import time
 from pathlib import Path
 
-# Allow `streamlit run src/reports/dashboard.py` from the repo root.
+# Allow importing from project root
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-import pandas as pd  # noqa: E402
-import streamlit as st  # noqa: E402
+import pandas as pd
+import streamlit as st
 
-from src.reports.loader import (  # noqa: E402
+from src.reports.loader import (
     DEFAULT_REPORTS_DIR,
     RunData,
     list_run_ids,
@@ -31,364 +32,387 @@ from src.reports.loader import (  # noqa: E402
     load_runtime,
 )
 
-st.set_page_config(page_title="bullbear backtest dashboard", layout="wide")
+st.set_page_config(page_title="BullBear AI トレーダー", layout="wide")
 
-SAFETY = (
-    "🔒 Read-only backtest viewer. No live trading, no orders. "
-    "Not investment advice."
-)
-
+# Safety description
+SAFETY_INFO = "🔒 閲覧専用画面（実際のお金は動きません）。注文ボタンや取引スイッチはありません。"
 
 def _reports_dir() -> str:
     return os.environ.get("BULLBEAR_REPORTS_DIR", DEFAULT_REPORTS_DIR)
 
+def translate_action(action: str) -> str:
+    mapping = {
+        "BUY_BULL": "🟢 値上がりを期待して「買い」",
+        "BUY_BEAR": "🔴 値下がりを期待して「買い」",
+        "NO_TRADE": "⚪ 様子見（何もしない）",
+        "EXIT": "🟡 手仕舞い（売却）",
+    }
+    return mapping.get(action, f"❓ {action}")
 
-def _confidence_filter(df: pd.DataFrame, key: str) -> pd.DataFrame:
-    if "confidence" not in df.columns or df.empty:
-        return df
-    lo, hi = st.slider("confidence range", 0.0, 1.0, (0.0, 1.0), 0.01, key=key)
-    return df[(df["confidence"].fillna(0) >= lo) & (df["confidence"].fillna(0) <= hi)]
+def translate_direction(direction: str) -> str:
+    mapping = {
+        "UP": "📈 上昇傾向",
+        "DOWN": "📉 下落傾向",
+        "FLAT": "➡️ 横ばい",
+    }
+    return mapping.get(direction, direction)
 
+def get_nickname(challenger_id: str) -> str:
+    if not challenger_id or challenger_id == "Base_Model":
+        return "オグリキャップ (本命)"
+    
+    # 競走馬風・和風・カタカナ風の語彙
+    prefixes = [
+        "ディープ", "キング", "トウカイ", "シンボリ", "メジロ", "オルフェ", "ゴールド", "サイレンス", "オグリ", 
+        "サクラ", "ウオッカ", "ジェンティル", "ナリタ", "スペシャル", "コントレイル", "アーモンド", "マヤノ", 
+        "ダイワ", "ライス", "ハル", "タマモ", "セイウン", "マチカネ", "エア", "アグネス", "グラス", "ビワ",
+        "ツインターボ", "ミホノ", "サイレンス"
+    ]
+    suffixes = [
+        "インパクト", "カメハメハ", "テイオー", "ルドルフ", "マックイーン", "エーヴル", "シップ", "スズカ", "キャップ", 
+        "ウララ", "バクシンオー", "ダービー", "ドンナ", "ブライアン", "ウィーク", "レイル", "アイ", "トップガン", 
+        "スカーレット", "シャワー", "クロス", "スカイ", "フクキタル", "グルーヴ", "タキオン", "ワンダー", "ハヤヒデ",
+        "ブルボン", "オー", "ターボ"
+    ]
+    
+    import hashlib
+    # 一意のハッシュ値からペアを選ぶ
+    h = int(hashlib.md5(challenger_id.encode('utf-8')).hexdigest(), 16)
+    p_idx = h % len(prefixes)
+    s_idx = (h // len(prefixes)) % len(suffixes)
+    
+    return f"{prefixes[p_idx]}{suffixes[s_idx]}"
 
-def _multiselect_filter(df: pd.DataFrame, col: str, key: str) -> pd.DataFrame:
-    if col not in df.columns or df.empty:
-        return df
-    options = sorted(x for x in df[col].dropna().unique())
-    if not options:
-        return df
-    chosen = st.multiselect(col, options, default=options, key=key)
-    return df[df[col].isin(chosen)] if chosen else df
+def update_initial_cash_in_yaml(file_path: str, new_value: float) -> bool:
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            return False
+        with path.open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        in_backtest = False
+        replaced = False
+        for idx, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("backtest:"):
+                in_backtest = True
+                continue
+            
+            if in_backtest and line.strip() and not line.startswith(" ") and not line.startswith("#"):
+                in_backtest = False
+            
+            if in_backtest and stripped.startswith("initial_cash:"):
+                parts = line.split(":", 1)
+                prefix = parts[0]
+                suffix = parts[1]
+                sub_parts = suffix.split("#", 1)
+                comment = f"  # {sub_parts[1].strip()}" if len(sub_parts) > 1 else ""
+                lines[idx] = f"{prefix}: {new_value}{comment}\n"
+                replaced = True
+                break
+        
+        if replaced:
+            with path.open("w", encoding="utf-8") as f:
+                f.writelines(lines)
+            return True
+    except Exception as e:
+        st.error(f"元本書き換え中にエラーが発生しました: {e}")
+    return False
 
+def restart_runner(config_path: str) -> None:
+    # Stop existing runner
+    subprocess.run([".venv/bin/python", "-m", "src.cli", "stop-runner", "--config", config_path], check=False)
+    time.sleep(2)
+    
+    # Start new runner in background
+    log_dir = Path("reports/runtime")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "paper_runner.log"
+    
+    with open(log_file, "a") as lf:
+        subprocess.Popen(
+            [".venv/bin/python", "-m", "src.cli", "run-paper", "--config", config_path, "--agent", "external"],
+            stdout=lf,
+            stderr=lf,
+            start_new_session=True
+        )
 
-def overview_tab(run: RunData) -> None:
-    s, m, c = run.summary, run.metrics, run.counters
-    st.subheader(f"Run: {run.run_id}")
-    meta_cols = st.columns(4)
-    meta_cols[0].write(f"**Created:** {s.get('created_at', '?')}")
-    meta_cols[1].write(f"**Symbols:** {', '.join(s.get('symbols', []))}")
-    period = s.get("period", {})
-    meta_cols[2].write(f"**Period:** {period.get('start','?')} → {period.get('end','?')}")
-    meta_cols[3].write(f"**Interval / Agent:** {s.get('interval','?')} / {s.get('agent_type','?')}")
+# --- TAB 1: 🏠 現在の状況 (Live Status) ---
+def render_status_tab(reports_dir: str, config_path: str) -> None:
+    rt = load_runtime(reports_dir)
+    
+    # 1. Runner state banner
+    if not rt["exists"]:
+        st.warning("⚠️ AIシステム（PaperRunner）が動いていません。")
+        st.info("※通常は夜間に自動で稼働します。")
+        return
+        
+    hb = rt["heartbeat"] or {}
+    status = hb.get("status", "stopped")
+    
+    if status == "running":
+        st.success("🟢 **AIは現在元気に活動中！**（アメリカの取引時間です）")
+    elif status == "sleeping":
+        st.info("💤 **AIは待機中** （アメリカ市場が閉まっているため、次のオープンを待っています）")
+    else:
+        st.error("🔴 AIは現在停止しています。")
 
-    grid = st.columns(4)
-    grid[0].metric("Total return %", m.get("total_return_pct", "—"))
-    grid[1].metric("Max drawdown %", m.get("max_drawdown_pct", "—"))
-    grid[2].metric("Win rate %", m.get("win_rate_pct", "—"))
-    grid[3].metric("Profit factor", m.get("profit_factor", "—"))
-    grid2 = st.columns(4)
-    grid2[0].metric("# trades", m.get("num_trades", "—"))
-    grid2[1].metric("No-trade ratio", m.get("no_trade_ratio", "—"))
-    grid2[2].metric("Rejected signals", m.get("rejected_signals", "—"))
-    grid2[3].metric("Forced exits", m.get("forced_exits", "—"))
+    # 2. Main wallet metrics
+    st.markdown("### 💵 現在のお財布の状況")
+    
+    daily_pnl = float(hb.get("daily_pnl", 0.0))
+    trades_today = int(hb.get("trades_today", 0))
+    
+    # Load current cash settings
+    initial_cash = 100000.0
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg_data = yaml.safe_load(f) or {}
+                initial_cash = cfg_data.get("backtest", {}).get("initial_cash", 100000.0)
+        except Exception:
+            pass
+            
+    current_cash = initial_cash + daily_pnl
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("💰 現在のお金（運用元本＋本日の損益）", f"${current_cash:,.2f}")
+    
+    # PnL color logic
+    pnl_str = f"+${daily_pnl:,.2f}" if daily_pnl >= 0 else f"-${abs(daily_pnl):,.2f}"
+    c2.metric("📅 本日の損益", pnl_str, delta=daily_pnl)
+    c3.metric("🔄 本日の取引回数", f"{trades_today} 回")
 
-    with st.expander("All metrics"):
-        st.json(m)
-    with st.expander("Benchmark comparison"):
-        st.json(run.benchmark)
+    # 3. Positions
+    st.markdown("### 💼 現在持っている株 (保有ポジション)")
+    pos = rt["current_positions"]
+    if not pos:
+        st.info("現在は株を持っていません（現金のみで様子見中です）。")
+    else:
+        for p in pos:
+            direction_label = "値上がり狙い（買い）" if p.get("direction") == "BULL" else "値下がり狙い（空売り）"
+            st.info(
+                f"**持ち株:** {p.get('symbol')} | "
+                f"**取引の方向:** {direction_label} | "
+                f"**購入価格:** ${p.get('entry_price'):,.2f} | "
+                f"**現在の損益割合:** {p.get('unrealized_pct')}%"
+            )
 
+    # 4. Latest AI decision
+    st.markdown("### 🧠 AIが直前に下した判断")
+    latest_sig = rt["latest_signal"]
+    
+    if not latest_sig:
+        st.info("AIの判断履歴がまだありません。")
+    else:
+        action_translated = translate_action(latest_sig.get("action", ""))
+        direction_translated = translate_direction(latest_sig.get("direction", ""))
+        
+        sc1, sc2 = st.columns([1, 2])
+        with sc1:
+            st.markdown(f"**【AIの提案】**\n### {action_translated}")
+            st.markdown(f"**対象銘柄:** {latest_sig.get('symbol') or 'なし'}")
+            st.markdown(f"**予測の自信度:** {int(float(latest_sig.get('confidence', 0)) * 100)}%")
+        with sc2:
+            st.markdown("**【AIがこの判断を下した理由】**")
+            st.success(latest_sig.get("reason", "理由は特に記載されていません。"))
 
-def charts_tab(run: RunData) -> None:
+# --- TAB 2: 📈 これまでの成績 (Performance) ---
+def render_performance_tab(run: RunData | None) -> None:
+    if not run:
+        st.info("📊 まだ取引データがありません。今日からの取引が行われると、ここにデータが蓄積されます。")
+        return
+
+    m = run.metrics
+    
+    st.markdown("### 📊 トータル運用成績のまとめ")
+    
+    c1, c2, c3, c4 = st.columns(4)
+    # Total return
+    total_ret = m.get("total_return_pct", 0.0)
+    c1.metric("💹 トータルの利益率", f"{total_ret}%")
+    
+    # Win rate
+    win_rate = m.get("win_rate_pct", 0.0)
+    c2.metric("🎯 勝率", f"{win_rate}%")
+    
+    # Profit Factor (Recovery Factor)
+    pf = m.get("profit_factor", 0.0)
+    c3.metric(
+        "🔄 回収率 (利益÷損失)", 
+        f"{pf} 倍", 
+        help="これが1.0倍を超えていれば、損よりも利益の方が大きい（黒字）という意味になります。"
+    )
+    
+    # Max Drawdown
+    dd = m.get("max_drawdown_pct", 0.0)
+    c4.metric(
+        "⚠️ 一番大きく資産が減った時の落ち込み幅", 
+        f"{dd}%",
+        help="過去の運用中、一時的にどれだけお財布が凹んだかを示すリスクの目安です。"
+    )
+
+    # Simple chart
+    st.markdown("---")
+    st.markdown("### 📈 お財布のお金の増え方 (資産推移)")
     eq = run.equity
     if not eq.empty and "equity" in eq.columns:
         eq = eq.copy()
-        # utc=True avoids "mixed timezones" when the series spans a DST change.
         eq["timestamp"] = pd.to_datetime(eq["timestamp"], utc=True)
         eq = eq.set_index("timestamp")
-        st.markdown("**Equity curve**")
         st.line_chart(eq["equity"])
-        running_max = eq["equity"].cummax()
-        drawdown = (eq["equity"] - running_max) / running_max * 100.0
-        st.markdown("**Drawdown curve (%)**")
-        st.area_chart(drawdown)
     else:
-        st.info("No equity curve (no bars).")
+        st.info("資産推移を描画するためのデータがまだ十分にありません。")
 
-    dp = run.daily_pnl
-    if not dp.empty and "pnl" in dp.columns:
-        dp = dp.copy()
-        st.markdown("**Daily PnL**")
-        st.bar_chart(dp.set_index("date")["pnl"])
-        st.markdown("**Cumulative PnL**")
-        st.line_chart(dp["pnl"].cumsum())
-
-    trades = run.trades
-    if not trades.empty and "symbol" in trades.columns:
-        st.markdown("**PnL by symbol**")
-        st.bar_chart(trades.groupby("symbol")["net_pnl"].sum())
-
-    action_dist = run.counters.get("action_distribution", {})
-    if action_dist:
-        st.markdown("**Agent action counts**")
-        st.bar_chart(pd.Series(action_dist))
-
-    sig = run.agent_signals
-    if not sig.empty and "confidence" in sig.columns:
-        st.markdown("**Agent confidence distribution**")
-        conf = pd.to_numeric(sig["confidence"], errors="coerce").dropna()
-        if not conf.empty:
-            binned = pd.cut(conf, bins=[i / 10 for i in range(11)])
-            counts = binned.value_counts().sort_index()
-            counts.index = counts.index.astype(str)  # Interval -> str for charting
-            st.bar_chart(counts)
-
-    rej = run.counters.get("risk_rejection_reasons", {})
-    if rej:
-        st.markdown("**Risk rejection reasons**")
-        st.bar_chart(pd.Series(rej))
-
-    if run.benchmark:
-        st.markdown("**Benchmark total return % (buy & hold / cash)**")
-        st.bar_chart(pd.Series(run.benchmark))
-
-
-def trades_tab(run: RunData) -> None:
-    trades = run.trades
-    if trades.empty:
-        st.info("No trades in this run.")
-        return
-    df = trades.copy()
-    f1, f2 = st.columns(2)
-    with f1:
-        df = _multiselect_filter(df, "symbol", "tr_sym")
-        df = _multiselect_filter(df, "direction", "tr_dir")
-    with f2:
-        df = _multiselect_filter(df, "exit_reason", "tr_exit")
-    st.dataframe(df, width="stretch")
-
-    if "trade_id" in trades.columns and len(trades):
-        tid = st.selectbox("Inspect trade_id", sorted(trades["trade_id"].unique()))
-        row = trades[trades["trade_id"] == tid].iloc[0].to_dict()
-        st.markdown("**Trade detail**")
-        st.json(row)
-        st.markdown("**Related agent signal(s)**")
-        sig = run.agent_signals
-        if not sig.empty and "trade_id" in sig.columns:
-            st.dataframe(sig[sig["trade_id"] == tid], width="stretch")
-        st.markdown("**Related risk decision(s)**")
-        rd = run.risk_decisions
-        if not rd.empty and "trade_id" in rd.columns:
-            st.dataframe(rd[rd["trade_id"] == tid], width="stretch")
-
-
-def signals_tab(run: RunData) -> None:
-    sig = run.agent_signals
-    if sig.empty:
-        st.info("No agent signals recorded.")
-        return
-    df = sig.copy()
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        df = _multiselect_filter(df, "action", "sig_action")
-        df = _multiselect_filter(df, "direction", "sig_dir")
-    with c2:
-        df = _multiselect_filter(df, "symbol", "sig_sym")
-        df = _multiselect_filter(df, "accepted", "sig_acc")
-    with c3:
-        df = _multiselect_filter(df, "rejection_reason", "sig_rej")
-        df = _confidence_filter(df, "sig_conf")
-    cols = [c for c in ["timestamp", "agent_name", "target_family", "direction",
-                        "action", "symbol", "confidence", "reason", "risk_notes",
-                        "accepted", "rejection_reason", "trade_id"] if c in df.columns]
-    st.dataframe(df[cols] if cols else df, width="stretch")
-
-
-def risk_tab(run: RunData) -> None:
-    rd = run.risk_decisions
-    if rd.empty:
-        st.info("No risk decisions recorded.")
-        return
-    df = rd.copy()
-    c1, c2 = st.columns(2)
-    with c1:
-        df = _multiselect_filter(df, "decision", "rd_dec")
-        df = _multiselect_filter(df, "symbol", "rd_sym")
-    with c2:
-        df = _multiselect_filter(df, "rejection_reason", "rd_rej")
-    st.dataframe(df, width="stretch")
-
-
-def compare_tab(reports_dir: str, all_ids: list[str]) -> None:
-    chosen = st.multiselect("Select runs to compare", all_ids, default=all_ids[-2:] if len(all_ids) >= 2 else all_ids)
-    if len(chosen) < 1:
-        st.info("Select at least one run.")
-        return
-    runs = [load_run(reports_dir, rid) for rid in chosen]
-
-    metric_rows = {r.run_id: r.metrics for r in runs}
-    st.markdown("**Metrics comparison**")
-    st.dataframe(pd.DataFrame(metric_rows), width="stretch")
-
-    st.markdown("**Equity curves (overlaid)**")
-    combined = {}
-    for r in runs:
-        if not r.equity.empty and "equity" in r.equity.columns:
-            e = r.equity.copy()
-            e["timestamp"] = pd.to_datetime(e["timestamp"], utc=True)
-            combined[r.run_id] = e.set_index("timestamp")["equity"]
-    if combined:
-        st.line_chart(pd.DataFrame(combined))
-    else:
-        st.info("No equity curves to overlay.")
-
-    if len(runs) >= 2:
-        st.markdown("**Config diff (run A vs run B)**")
-        a, b = runs[0].summary, runs[1].summary
-        keys = sorted(set(a) | set(b))
-        diff = [{"field": k, runs[0].run_id: a.get(k), runs[1].run_id: b.get(k)}
-                for k in keys if a.get(k) != b.get(k)]
-        st.dataframe(pd.DataFrame(diff) if diff else pd.DataFrame([{"info": "no differences"}]),
-                     width="stretch")
-
-
-def runtime_tab(reports_dir: str) -> None:
+# --- TAB 3: 🤖 AIの判断日記 (AI Diary) ---
+def render_diary_tab(reports_dir: str) -> None:
+    st.markdown("### 📝 AIの判断日記（タイムライン）")
+    st.caption("AIが5分ごとに考えたことや、ニュースに対して下した判断の履歴です。")
+    
     rt = load_runtime(reports_dir)
-    if not rt["exists"]:
-        st.info("No runtime data yet. Start the paper runner: "
-                "`python -m src.cli run-paper --config config/default.yaml --agent mock`")
+    events = rt["events"]
+    
+    if events.empty:
+        st.info("まだ日記が書かれていません。取引が始まると自動的に記録されます。")
         return
-    hb = rt["heartbeat"]
-    if not hb:
-        st.info("Runner has not written a heartbeat yet.")
-    else:
-        g = st.columns(4)
-        g[0].metric("Runner status", hb.get("status", "—"))
-        g[1].metric("Market state", hb.get("market_state", "—"))
-        g[2].metric("Daily PnL", hb.get("daily_pnl", "—"))
-        g[3].metric("Trades today", hb.get("trades_today", "—"))
-        g2 = st.columns(4)
-        g2[0].metric("Consecutive losses", hb.get("consecutive_losses", "—"))
-        g2[1].metric("DAILY_STOP", str(hb.get("daily_stop", False)))
-        g2[2].write(f"**Session:** {hb.get('current_session_open','?')} → {hb.get('current_session_close','?')}")
-        g2[3].write(f"**Next open/close:** {hb.get('next_market_open','?')} / {hb.get('next_market_close','?')}")
-        c = st.columns(3)
-        c[0].write(f"**Last bar:** {hb.get('last_bar_time','—')}")
-        c[1].write(f"**Last processed bar:** {hb.get('last_processed_bar_time','—')}")
-        c[2].write(f"**Last order:** {hb.get('last_order_time','—')}")
-        if hb.get("daily_stop"):
-            st.error("DAILY_STOP active — no new entries for the rest of the session.")
+        
+    # Simplify events
+    # We display events chronologically (recent first)
+    df_disp = events.sort_index(ascending=False).head(30)
+    
+    for _, row in df_disp.iterrows():
+        t_str = row.get("timestamp", "")
+        # Format time if possible
+        try:
+            t_str = pd.Timestamp(t_str).strftime("%m/%d %H:%M:%S")
+        except Exception:
+            pass
+            
+        event_type = row.get("event", "")
+        msg = row.get("message", "")
+        
+        # Friendly icons
+        icon = "ℹ️"
+        if "ORDER" in event_type or "TRADE" in event_type:
+            icon = "🔄 [取引]"
+        elif "SIGNAL" in event_type:
+            icon = "🧠 [AI判断]"
+        elif "ERROR" in event_type:
+            icon = "⚠️ [エラー]"
+            
+        st.write(f"**{t_str}** | {icon} {msg}")
 
-    st.markdown("**Current paper positions**")
-    pos = rt["current_positions"]
-    st.dataframe(pd.DataFrame(pos) if pos else pd.DataFrame([{"info": "flat"}]), width="stretch")
-
-    cols = st.columns(2)
-    with cols[0]:
-        st.markdown("**Latest signal**")
-        st.json(rt["latest_signal"] or {"info": "none"})
-    with cols[1]:
-        st.markdown("**Latest risk decision**")
-        st.json(rt["latest_risk_decision"] or {"info": "none"})
-
-    st.markdown("**Recent runtime events**")
-    st.dataframe(rt["events"] if not rt["events"].empty else pd.DataFrame([{"info": "none"}]),
-                 width="stretch")
-    st.markdown("**Recent errors**")
-    st.dataframe(rt["errors"] if not rt["errors"].empty else pd.DataFrame([{"info": "none"}]),
-                 width="stretch")
-
-
-def evolution_tab(reports_dir: str) -> None:
+# --- TAB 4: 🧬 AIの自動成長 (ABテスト状況) ---
+def render_evolution_tab(reports_dir: str) -> None:
     evo = load_evolution(reports_dir)
     champ = evo["champion"]
+    
     if not champ:
-        st.info("No evolution registry yet. Create one with "
-                "`python -m src.cli champion` / `create-challenger` / `run-evolution`.")
+        st.info("🧬 自動成長システムは現在準備中です。最初の数回のデータ取得をお待ちください。")
         return
 
-    st.markdown("**Current Champion**")
-    cc = st.columns(3)
-    cc[0].write(f"**ID:** {champ.get('champion_id','?')}")
-    cc[1].write(f"**Created:** {champ.get('created_at','?')}")
-    cc[2].write(f"**Patch:** {champ.get('config_patch') or 'base config'}")
-    with st.expander("Champion metrics"):
-        st.json(champ.get("metrics", {}))
+    champ_id = champ.get('champion_id', 'Base_Model')
+    champ_nickname = get_nickname(champ_id)
+    metrics = champ.get('metrics', {}) or {}
 
-    prev = evo["previous_champions"]
-    st.markdown("**Previous Champions (fallbacks)**")
-    st.dataframe(prev if not prev.empty else pd.DataFrame([{"info": "none"}]), width="stretch")
+    st.markdown("### 🏆 現在の本命AI（正式採用中の設定）")
+    c1, c2, c3 = st.columns(3)
+    c1.info(f"**本命AIの愛称:**\n### {champ_nickname}")
+    
+    # Show return delta
+    total_ret = float(metrics.get("total_return_pct", 0.0))
+    c2.metric("💹 トータルの利益率", f"{total_ret:+.2f}%")
+    
+    win_rate = float(metrics.get("win_rate_pct", 0.0))
+    c3.metric("🎯 勝率", f"{win_rate:.1f}%")
 
-    st.markdown("**Active Challengers / Shadow & Canary performance / Allocations**")
+    st.markdown("---")
+    st.markdown("### ⚔️ 裏側で仮想テスト中の「挑戦者AI」たち (ABテスト)")
+    st.caption("最大5つの挑戦者AI（競走馬たち）が、本命の座を奪うために裏で仮想取引の競い合いをしています。")
+    
     ch = evo["challengers"]
-    if ch:
-        rows = []
-        for c in ch:
-            m = c.get("metrics", {}) or {}
-            rows.append({"challenger_id": c.get("challenger_id"), "status": c.get("status"),
-                         "allocation_pct": c.get("allocation_pct"), "source": c.get("source"),
-                         "num_trades": m.get("num_trades"), "profit_factor": m.get("profit_factor"),
-                         "expectancy": m.get("expectancy"), "max_drawdown_pct": m.get("max_drawdown_pct"),
-                         "net_pnl_after_costs": m.get("net_pnl_after_costs"),
-                         "patch": c.get("config_patch")})
-        st.dataframe(pd.DataFrame(rows), width="stretch")
+    if not ch:
+        st.info("現在、対戦中の挑戦者はいません（本命AIだけで稼働中）。")
     else:
-        st.info("No challengers yet.")
+        rows = []
+        for idx, c in enumerate(ch, 1):
+            m = c.get("metrics", {}) or {}
+            c_id = c.get("challenger_id")
+            c_nickname = get_nickname(c_id)
+            
+            c_ret = float(m.get("total_return_pct", 0.0))
+            c_win = float(m.get("win_rate_pct", 0.0))
+            
+            rows.append({
+                "順位": f"第 {idx} 候補",
+                "競走馬名 (AI愛称)": c_nickname,
+                "利益率 (利回り)": f"{c_ret:+.2f}%",
+                "勝率": f"{c_win:.1f}%",
+                "仮想取引回数": f"{m.get('num_trades', 0)} 回",
+                "テスト状態": "仮想取引中（シャドウ）" if c.get("status") == "shadow" else "最終審査中（カナリア）",
+            })
+        st.table(pd.DataFrame(rows))
 
-    cols = st.columns(2)
-    with cols[0]:
-        st.markdown("**Promotion candidates / policy pass-fail**")
-        st.dataframe(_events_of(evo["events"], ("PROMOTION_EVALUATED", "PROMOTION_PASSED", "PROMOTION_FAILED")),
-                     width="stretch")
-        st.markdown("**Auto-promotion history**")
-        st.dataframe(evo["promotions"] if not evo["promotions"].empty else pd.DataFrame([{"info": "none"}]),
-                     width="stretch")
-    with cols[1]:
-        st.markdown("**Rollback status / history**")
-        st.dataframe(evo["rollbacks"] if not evo["rollbacks"].empty else pd.DataFrame([{"info": "none"}]),
-                     width="stretch")
-        st.markdown("**Drift alerts**")
-        st.dataframe(evo["drift"] if not evo["drift"].empty else pd.DataFrame([{"info": "none"}]),
-                     width="stretch")
-
-    st.markdown("**Bandit allocation history**")
-    st.dataframe(evo["allocations"] if not evo["allocations"].empty else pd.DataFrame([{"info": "none"}]),
-                 width="stretch")
-    st.markdown("**Mutation history**")
-    st.dataframe(evo["mutations"] if not evo["mutations"].empty else pd.DataFrame([{"info": "none"}]),
-                 width="stretch")
-    st.markdown("**Recent evolution events**")
-    st.dataframe(evo["events"].tail(40) if not evo["events"].empty else pd.DataFrame([{"info": "none"}]),
-                 width="stretch")
-    st.caption("Read-only. No live orders, no live trading, no broker controls.")
-
-
-def _events_of(df, types):
-    if df.empty or "event" not in df.columns:
-        return pd.DataFrame([{"info": "none"}])
-    sub = df[df["event"].isin(types)]
-    return sub if not sub.empty else pd.DataFrame([{"info": "none"}])
-
-
+# --- MAIN RENDERER ---
 def main() -> None:
-    st.title("bullbear-ai-trader — backtest dashboard")
-    st.caption(SAFETY)
+    st.title("📈 BullBear AI トレーダー (かんたん初心者画面)")
+    st.caption(SAFETY_INFO)
 
-    reports_dir = st.sidebar.text_input("Reports dir", _reports_dir())
+    # Sidebar
+    st.sidebar.markdown("### ⚙️ お金の元本設定")
+    config_path = st.sidebar.text_input("📁 設定ファイルパス", "config/default.yaml")
+    
+    # Read current initial cash
+    initial_cash = 100000.0
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg_data = yaml.safe_load(f) or {}
+                initial_cash = cfg_data.get("backtest", {}).get("initial_cash", 100000.0)
+        except Exception:
+            pass
+            
+    new_cash = st.sidebar.number_input(
+        "💵 運用する元本 (米ドル $)", 
+        min_value=1.0, 
+        value=float(initial_cash), 
+        step=1000.0,
+        help="取引に使う元本を設定します。ドル表記ですので、1万ドルの場合は10000と入力してください。"
+    )
+    
+    if new_cash != initial_cash:
+        if st.sidebar.button("💾 この元本で再スタート（反映して再起動）"):
+            if update_initial_cash_in_yaml(config_path, new_cash):
+                st.sidebar.success(f"元本を ${new_cash:,.0f} ドルに更新しました！AIランナーを再起動します。")
+                restart_runner(config_path)
+                st.rerun()
+                
+    st.sidebar.markdown("---")
+    reports_dir = st.sidebar.text_input("📊 レポート出力先ディレクトリ", _reports_dir())
+    
+    # Load past run if any
     all_ids = list_run_ids(reports_dir)
-    if not all_ids:
-        st.warning(f"No runs found under `{reports_dir}/runs/`. Run a backtest first.")
-        return
+    run = None
+    if all_ids:
+        run = load_run(reports_dir, "latest")
 
-    run_id = st.sidebar.selectbox("Run", ["latest", *all_ids], index=0)
-    run = load_run(reports_dir, run_id)
-
-    tabs = st.tabs(["Overview", "Charts", "Trades", "Agent Signals", "Risk Decisions",
-                    "Runtime (Paper)", "Evolution", "Compare"])
+    # Beginner tabs
+    tabs = st.tabs([
+        "🏠 現在の状況", 
+        "📈 これまでの成績", 
+        "🤖 AIの判断日記", 
+        "🧬 AIの自動成長 (ABテスト)"
+    ])
+    
     with tabs[0]:
-        overview_tab(run)
+        render_status_tab(reports_dir, config_path)
     with tabs[1]:
-        charts_tab(run)
+        render_performance_tab(run)
     with tabs[2]:
-        trades_tab(run)
+        render_diary_tab(reports_dir)
     with tabs[3]:
-        signals_tab(run)
-    with tabs[4]:
-        risk_tab(run)
-    with tabs[5]:
-        runtime_tab(reports_dir)
-    with tabs[6]:
-        evolution_tab(reports_dir)
-    with tabs[7]:
-        compare_tab(reports_dir, all_ids)
+        render_evolution_tab(reports_dir)
 
-
-main()
+if __name__ == "__main__":
+    main()

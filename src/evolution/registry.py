@@ -69,6 +69,26 @@ class EvolutionRegistry:
                           **kw) -> Challenger:
         chal = Challenger.create(config_patch, source=source, **kw)
         challengers = self.list_challengers()
+        
+        # チャレンジャーの最大数を5つに制限する
+        MAX_CHALLENGERS = 5
+        if len(challengers) >= MAX_CHALLENGERS:
+            def sort_key(c: Challenger) -> tuple[int, float, str]:
+                metrics = c.metrics or {}
+                num_trades = metrics.get("num_trades", 0)
+                total_return = metrics.get("total_return_pct", 0.0)
+                # 取引実績があるものを優先削除対象とする (0), 未実績は保護 (1)
+                trade_status = 0 if num_trades > 0 else 1
+                # total_return（利益率）が低いほど先に削除されるようにする
+                # 作成日時が古いほど先に削除されるようにする
+                created_at = c.created_at or ""
+                return (trade_status, total_return, created_at)
+            
+            challengers.sort(key=sort_key)
+            # 5個枠に収まるように、最も不要なものを削除する
+            num_to_delete = len(challengers) - MAX_CHALLENGERS + 1
+            challengers = challengers[num_to_delete:]
+            
         challengers.append(chal)
         self._save_challengers(challengers)
         return chal

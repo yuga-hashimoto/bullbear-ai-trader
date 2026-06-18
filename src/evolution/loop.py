@@ -168,7 +168,7 @@ def run_evolution_cycle(cfg: Config, env: str = "paper", agent_type: str | None 
                    and policy.get("allow_auto_promote_to_champion", False)
                    and not registry.is_frozen(today))
     if can_promote and passing:
-        best, result = max(passing, key=lambda pr: pr[0].metrics.get("expectancy", 0.0))
+        best, result = max(passing, key=lambda pr: pr[0].metrics.get("total_return_pct", 0.0))
         if promote_challenger(cfg, registry, store, best, env, result.reasons):
             promoted = best.challenger_id
 

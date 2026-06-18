@@ -105,7 +105,7 @@ risk:
 
 # --- Backtest / execution costs ---------------------------------------------
 backtest:
-  initial_cash: 100000.0
+  initial_cash: 10000.0
   position_sizing: fixed_fraction
   fraction_per_trade: 1.0          # fraction of equity per single position
   fill_model: next_bar_open        # decide at bar close, fill at next bar open
@@ -172,7 +172,7 @@ adaptive_allocation:
   min_allocation_pct: 0
   max_challenger_allocation_pct: 30
   reallocate_every_bars: 12
-  reward_metric: risk_adjusted_expectancy
+  reward_metric: net_pnl_after_costs
   live_enabled: false                # bandit reallocation disabled on live
 
 # --- Paths ------------------------------------------------------------------

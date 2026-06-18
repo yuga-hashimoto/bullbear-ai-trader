@@ -19,9 +19,39 @@ Engine, execution simulation, reporting and a read-only dashboard.
 
 ## 設計思想 / Design
 
-```
-Data → Features → Agent Context → Agent Signal → Signal Validation
-     → Risk Engine (authoritative) → Backtest Execution → Report / Dashboard
+本システムは、5分ごとに最新データとニュース速報をチェックし、新規のニュースが発生したタイミングでのみAIに意思決定を仰ぐ設計になっています。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as データ源 (yfinance等)
+    participant S as システム (PaperRunner/バックテスト)
+    participant A as AI (OpenCode API)
+    participant R as リスクエンジン
+    participant B as ブローカー (PaperBroker等)
+
+    Note over S: 5分ごとのループ実行 (バー確定時)
+    S->>D: 最新の市場データ (数字) を取得
+    S->>D: 最新ニュースを検索 (yfinance等)
+    D-->>S: データ返却
+    
+    alt 既読または新規のニュースが無い場合
+        Note over S: AIへの問い合わせをスキップ
+        Note over S: シグナルを自動的に NO_TRADE に決定
+    else 新規のニュース速報を検知した場合
+        Note over S: 新規ニュースからプロンプトを構築
+        S->>A: 市場情報 + ニュースを送信して推論依頼
+        A-->>S: シグナル返却 (BUY_BULL, BUY_BEAR, EXIT 等)
+        Note over S: ニュースIDを既読リストに登録
+    end
+
+    S->>R: シグナルを検証 (Risk Engine)
+    alt リスク制限に抵触 (確信度不足、最大損失超過など)
+        R-->>S: 提案を却下 (REJECT)
+    else 安全基準をクリア
+        R-->>S: 提案を承認 (ACCEPT)
+        S->>B: 注文執行 (ENTER / EXIT)
+    end
 ```
 
 - **Agent はこのリポジトリの外**。OpenClaw / HermesAgent が複数モデル・外部ツールに接続して
@@ -137,6 +167,18 @@ Signal を受けて **ACCEPT / REJECT / FORCE_EXIT** を判定（`src/risk/engin
 - 最大取引回数/日・最大保有時間・寄付直後禁止・引け前新規禁止・大引け前強制決済
 - 既存ポジション中の追加エントリー禁止・同一銘柄クールダウン
 - すべての拒否理由をログ（`risk_decisions.jsonl` / レポート）に残す
+
+## ニュース速報トリガーによるAI呼び出し制御 (News-Triggered AI Execution)
+
+不要なAPIコールと課金を抑えるため、本システムは**「ニュース速報（新規のニュース）が検知された場合のみAIを呼び出す」**トリガー制御が組み込まれています。
+
+- **実運用時 (PaperRunner)**:
+  5分足の確定ごとに `yfinance` から関連インデックス（`QQQ`, `SMH` 等）のニュースを巡回取得し、まだ処理していない新規のニュースがある場合のみ OpenCode API (DeepSeek) に接続します。
+- **バックテスト時 (Backtest)**:
+  バックテスト過去データ実行時は、ダミーニュース等の発生はなくAPIコールは完全にゼロになり、すべて `NO_TRADE` として瞬時に処理されます。
+- **重複排除**:
+  一度読み込んだニュースIDは `seen_news_ids` に保持され、同じニュースに対して重複してAIを呼び出すことはありません。
+
 
 ## run 出力構成 / Report output
 
