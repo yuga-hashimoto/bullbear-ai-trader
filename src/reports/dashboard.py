@@ -101,7 +101,7 @@ def main() -> None:
     rec = state["recommendation"]
     paper = state["paper"]
     on = rec["is_risk_on"]
-    pill = ("リスクオン（株を保有）", "on") if on else ("リスク退避（債券/現金）", "off")
+    pill = ("リスクオン（株を推奨）", "on") if on else ("リスク退避（債券/現金を推奨）", "off")
     st.markdown(
         f'<div class="hd"><div><span class="brand">Bull<b>Bear</b> AI</span>'
         f'<span class="brand-sub">Dual Momentum · {state["as_of_month"]}時点</span></div>'
@@ -113,7 +113,7 @@ def main() -> None:
     months = paper.get("months", 0)
     started = state.get("inception_month", "—")
     cards = [
-        ("今月の保有", f"{rec['asset']} ×{rec['leverage']}", _ASSET_LABEL.get(rec["asset"], ""), ""),
+        ("今月の推奨（シグナル）", f"{rec['asset']} ×{rec['leverage']}", _ASSET_LABEL.get(rec["asset"], ""), ""),
         ("ペーパー資産", f"{paper['equity']:,.0f}",
          f"元本 {paper['capital']:,.0f} / {started}運用開始", ""),
         ("運用リターン（実績）", f"{paper['total_return_pct']:+,.1f}%",
@@ -126,12 +126,14 @@ def main() -> None:
         f'<div class="kpi-s">{s}</div></div>' for l, v, s, t in cards) + "</div>"
     st.markdown(grid, unsafe_allow_html=True)
 
-    if months == 0:
-        st.markdown('<div class="panel" style="color:var(--muted);font-size:.9rem">'
-                    'これは<b>今月から始めるペーパー運用</b>です。資産は元本からスタートし、'
-                    '毎月の保有実績がここに積み上がります。右上の「過去検証」は2005年からの'
-                    '<b>仮想シミュレーション（実際の保有ではありません）</b>で、戦略の実力の参考値です。'
-                    '</div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel" style="color:var(--muted);font-size:.88rem">'
+                '⚠️ これは戦略の<b>推奨（シグナル）</b>です。実際にEEM等を保有しているわけではなく、'
+                '自動売買もしません。<b>買うかどうかはあなたが判断します。</b>「ペーパー資産」は'
+                'この推奨どおりに動いた場合の仮想成績で、' +
+                ('<b>今月開始したばかりなので実績はこれから</b>積み上がります。' if months == 0
+                 else f'運用開始から{months}ヶ月の仮想実績です。') +
+                '右上「過去検証」は2005年からの仮想シミュレーション（実際の保有ではありません）。'
+                '</div>', unsafe_allow_html=True)
 
     # forward paper equity curve
     curve = state.get("equity_curve") or []
@@ -142,13 +144,13 @@ def main() -> None:
         st.line_chart(df.set_index("month")["equity"], height=240, color="#6c8cff")
 
     # momentum ranking
-    st.markdown('<div class="sec">資産モメンタム・ランキング（強い順に保有）</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">資産モメンタム・ランキング（強い順に推奨）</div>', unsafe_allow_html=True)
     ranking = rec.get("ranking") or []
     mx = max((abs(r["momentum_pct"]) for r in ranking), default=1.0) or 1.0
     rows = ""
     for r in ranking:
         m = r["momentum_pct"]
-        held = " ◀ 保有中" if r["symbol"] == rec["asset"] else ""
+        held = " ◀ 今月の推奨" if r["symbol"] == rec["asset"] else ""
         color = "var(--pos)" if m >= 0 else "var(--neg)"
         w = min(100, abs(m) / mx * 100)
         rows += (f'<div class="rk"><div class="nm">{_label(r["symbol"])}{held}</div>'
@@ -157,7 +159,7 @@ def main() -> None:
     st.markdown(f'<div class="panel">{rows}</div>', unsafe_allow_html=True)
 
     # holding history
-    st.markdown('<div class="sec">直近の保有履歴</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">直近の推奨・仮想保有の履歴</div>', unsafe_allow_html=True)
     hist = state.get("history") or []
     hrows = "".join(
         f'<tr><td>{h["month"]}</td><td>{_label(h["held"]) if h.get("held") else "—"}</td>'
