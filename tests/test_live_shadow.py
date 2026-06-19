@@ -37,11 +37,13 @@ def _cfg(cfg, tmp_path):
 
 
 def _bull_context(ts: str) -> dict:
+    # Fully trend-aligned bull bar so the V9 entry fires (QQQ -> TQQQ).
     return {
         "timestamp": ts,
         "symbols": {
-            "QQQ": {"close": 101.0, "vwap": 100.0, "returns": {"3_bar": 0.01}},
-            "SMH": {"close": None, "vwap": None, "returns": {"3_bar": None}},
+            "QQQ": {"close": 101.0, "vwap": 100.0, "rsi": 58.0,
+                    "returns": {"1_bar": 0.004, "3_bar": 0.01, "6_bar": 0.008, "12_bar": 0.006}},
+            "SMH": {"close": None, "vwap": None, "rsi": None, "returns": {"3_bar": None}},
         },
     }
 

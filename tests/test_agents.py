@@ -8,11 +8,13 @@ from src.agents.replay_agent import ReplayAgent
 from src.agents.signal_schema import Signal
 
 
-def _ctx(ts, qqq_close, qqq_vwap, ret3):
+def _ctx(ts, qqq_close, qqq_vwap, ret3, rsi=55.0):
+    # V9 entry needs full multi-timeframe alignment + RSI; mirror ret3 across lags.
     return {
         "timestamp": ts,
         "symbols": {
-            "QQQ": {"close": qqq_close, "vwap": qqq_vwap, "returns": {"3_bar": ret3}},
+            "QQQ": {"close": qqq_close, "vwap": qqq_vwap, "rsi": rsi,
+                    "returns": {"1_bar": ret3, "3_bar": ret3, "6_bar": ret3, "12_bar": ret3}},
         },
     }
 
