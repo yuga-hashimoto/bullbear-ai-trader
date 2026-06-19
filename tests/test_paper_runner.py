@@ -14,7 +14,7 @@ from src.agents.base import BaseAgent
 from src.agents.signal_schema import no_trade_signal
 from src.backtest.portfolio import Position
 from src.config.settings import LiveTradingDisabledError
-from src.runners.base import request_stop, runtime_dir
+from src.runners.base import request_stop, runner_disabled, runtime_dir
 from src.runners.feed import FrozenFramesFeed
 from src.runners.heartbeat import RuntimeWriter
 from src.runners.live_runner import LiveRunner
@@ -128,6 +128,42 @@ def test_stale_data_no_trade(cfg, frames, tmp_path):
     assert r.position is None
 
 
+def test_bar_start_timestamp_is_fresh_through_close_plus_vendor_delay(
+    cfg, frames, tmp_path
+):
+    last_bar = pd.Timestamp("2024-01-10 09:30", tz=ET)
+    limited = {s: df[df.index <= last_bar] for s, df in frames.items()}
+    cfg2 = _cfg(
+        cfg,
+        tmp_path,
+        stale_data_threshold_seconds=180,
+        vendor_delay_seconds=600,
+    )
+    r = _runner(cfg2, ConstantSignalAgent("NO_TRADE"), limited)
+
+    res = r.step(_dt(9, 39))
+
+    assert res["action"] in {"processed", "warmup"}
+    assert r.data_errors == 0
+
+
+def test_repeated_stale_data_waits_without_stopping_runner(cfg, frames, tmp_path):
+    old = {s: df[df.index <= pd.Timestamp("2024-01-03 16:00", tz=ET)] for s, df in frames.items()}
+    r = _runner(
+        _cfg(cfg, tmp_path, max_data_errors_before_stop=3),
+        ConstantSignalAgent("NO_TRADE"),
+        old,
+    )
+
+    for _ in range(3):
+        assert r.step(_dt(11, 0))["action"] == "stale"
+
+    assert not r.should_stop()
+    heartbeat = RuntimeWriter(runtime_dir(r.cfg)).read_heartbeat()
+    assert heartbeat["status"] == "waiting"
+    assert heartbeat["reason"] == "stale_data"
+
+
 def test_agent_timeout_results_in_no_trade(cfg, frames, tmp_path):
     cfg2 = _cfg(cfg, tmp_path, max_agent_latency_seconds=1)
     r = _runner(cfg2, SlowAgent(delay=1.5), frames)
@@ -145,6 +181,8 @@ def test_duplicate_bar_not_processed_twice(cfg, frames, tmp_path):
     res = r.step(_dt(11, 0))  # same bar
     assert res["action"] == "wait_bar"
     assert agent.calls == calls_after_first  # not re-processed
+    heartbeat = RuntimeWriter(runtime_dir(r.cfg)).read_heartbeat()
+    assert heartbeat["reason"] == ""
 
 
 def test_stop_runner_flag_and_safe_stop(cfg, frames, tmp_path):
@@ -163,6 +201,16 @@ def test_run_loop_exits_and_emits_stopped(cfg, frames, tmp_path):
     r.run()
     events = (runtime_dir(cfg2) / "paper_events.jsonl").read_text()
     assert "RUNNER_STOPPED" in events and "RUNNER_STARTED" in events
+
+
+def test_run_does_not_clear_persistent_disable_flag(cfg, frames, tmp_path):
+    cfg2 = _cfg(cfg, tmp_path)
+    request_stop(cfg2)
+    r = _runner(cfg2, ConstantSignalAgent("NO_TRADE"), frames)
+
+    r.run()
+
+    assert runner_disabled(cfg2)
 
 
 def test_live_runner_refuses_to_start(cfg, tmp_path):

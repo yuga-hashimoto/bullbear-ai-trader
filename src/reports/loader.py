@@ -105,6 +105,71 @@ def load_runtime(reports_dir: str | Path) -> dict[str, Any]:
     }
 
 
+def load_diary_events(
+    reports_dir: str | Path,
+    limit: int = 30,
+) -> list[dict[str, str]]:
+    """Return the latest meaningful runtime events as Japanese diary entries."""
+    from .diary import format_diary_event
+
+    path = Path(reports_dir) / "runtime" / "paper_events.jsonl"
+    events = _read_jsonl(path)
+    if events.empty:
+        return []
+    entries = [
+        formatted
+        for event in events.to_dict(orient="records")
+        if (formatted := format_diary_event(event)) is not None
+    ]
+    return list(reversed(entries[-limit:]))
+
+
+def load_runtime_performance(
+    reports_dir: str | Path,
+    initial_cash: float,
+) -> dict[str, Any]:
+    """Calculate current PaperRunner performance from live runtime artifacts."""
+    runtime = load_runtime(reports_dir)
+    hb = runtime["heartbeat"]
+    daily = runtime["daily_state"]
+    events = _read_jsonl(Path(reports_dir) / "runtime" / "paper_events.jsonl")
+
+    marked_equity = daily.get("marked_equity")
+    if marked_equity is None:
+        marked_equity = daily.get("cash")
+    if marked_equity is None:
+        marked_equity = initial_cash + float(hb.get("daily_pnl", 0.0))
+    current_equity = float(marked_equity)
+    total_pnl = current_equity - float(initial_cash)
+    total_return_pct = (
+        total_pnl / float(initial_cash) * 100.0
+        if initial_cash
+        else 0.0
+    )
+
+    closed = events[events["event"] == "POSITION_CLOSED"] if (
+        not events.empty and "event" in events.columns
+    ) else pd.DataFrame()
+    closed_trades = len(closed)
+    win_rate_pct: float | None = None
+    if closed_trades and "net_pnl" in closed.columns:
+        pnl = pd.to_numeric(closed["net_pnl"], errors="coerce").dropna()
+        closed_trades = len(pnl)
+        if closed_trades:
+            win_rate_pct = float((pnl > 0).mean() * 100.0)
+
+    return {
+        "current_equity": round(current_equity, 2),
+        "total_pnl": round(total_pnl, 2),
+        "total_return_pct": round(total_return_pct, 4),
+        "daily_pnl": float(hb.get("daily_pnl", 0.0)),
+        "daily_pnl_jpy": float(hb.get("daily_pnl_jpy", 0.0)),
+        "closed_trades": closed_trades,
+        "win_rate_pct": win_rate_pct,
+        "timestamp": hb.get("timestamp"),
+    }
+
+
 def load_evolution(reports_dir: str | Path) -> dict[str, Any]:
     """Load Champion/Challenger registry + evolution artifacts (robust)."""
     import yaml

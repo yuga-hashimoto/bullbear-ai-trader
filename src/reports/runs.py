@@ -33,7 +33,7 @@ log = get_logger(__name__)
 
 
 def new_run_id(now: datetime | None = None) -> str:
-    return (now or datetime.now()).strftime("%Y-%m-%d_%H%M%S")
+    return (now or datetime.now()).strftime("%Y-%m-%d_%H%M%S_%f")
 
 
 def runs_root(cfg: Config) -> Path:

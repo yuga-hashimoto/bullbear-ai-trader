@@ -25,18 +25,18 @@ import streamlit as st
 
 from src.reports.loader import (
     DEFAULT_REPORTS_DIR,
-    RunData,
-    list_run_ids,
+    load_diary_events,
     load_evolution,
-    load_run,
     load_runtime,
     load_runtime_performance,
 )
+from src.reports.diary import translate_reason
 
 st.set_page_config(page_title="BullBear AI トレーダー", layout="wide")
 
 # Safety description
 SAFETY_INFO = "🔒 閲覧専用画面（実際のお金は動きません）。注文ボタンや取引スイッチはありません。"
+LIVE_REFRESH_INTERVAL = "10s"
 
 def _reports_dir() -> str:
     return os.environ.get("BULLBEAR_REPORTS_DIR", DEFAULT_REPORTS_DIR)
@@ -57,6 +57,15 @@ def translate_direction(direction: str) -> str:
         "FLAT": "➡️ 横ばい",
     }
     return mapping.get(direction, direction)
+
+
+def position_direction_label(direction: str) -> str:
+    if direction == "UP":
+        return "値上がり狙い（ETFを買い）"
+    if direction == "DOWN":
+        return "値下がり局面狙い（逆ETFを買い）"
+    return "方向不明"
+
 
 def get_nickname(challenger_id: str) -> str:
     if not challenger_id or challenger_id == "Base_Model":
@@ -140,6 +149,7 @@ def restart_runner(config_path: str) -> None:
         )
 
 # --- TAB 1: 🏠 現在の状況 (Live Status) ---
+@st.fragment(run_every=LIVE_REFRESH_INTERVAL)
 def render_status_tab(reports_dir: str, config_path: str) -> None:
     rt = load_runtime(reports_dir)
     
@@ -193,7 +203,7 @@ def render_status_tab(reports_dir: str, config_path: str) -> None:
         st.info("現在は株を持っていません（現金のみで様子見中です）。")
     else:
         for p in pos:
-            direction_label = "値上がり狙い（買い）" if p.get("direction") == "BULL" else "値下がり狙い（空売り）"
+            direction_label = position_direction_label(str(p.get("direction", "")))
             entry_px = p.get("entry_price")
             entry_px_str = f"${entry_px:,.2f}" if entry_px is not None else "不明"
             unrealized = p.get("unrealized_pct")
@@ -230,95 +240,24 @@ def render_status_tab(reports_dir: str, config_path: str) -> None:
             st.markdown(f"**予測の自信度:** {confidence_pct}%")
         with sc2:
             st.markdown("**【AIがこの判断を下した理由】**")
-            st.success(latest_sig.get("reason", "理由は特に記載されていません。"))
+            st.success(translate_reason(latest_sig.get("reason")))
 
-# --- TAB 2: 📈 これまでの成績 (Performance) ---
-def render_performance_tab(run: RunData | None) -> None:
-    if not run:
-        st.info("📊 まだ取引データがありません。今日からの取引が行われると、ここにデータが蓄積されます。")
-        return
-
-    m = run.metrics
-    
-    st.markdown("### 📊 最新バックテストの成績")
-    st.caption("これは過去データでの検証結果です。現在稼働中のペーパー損益ではありません。")
-    
-    c1, c2, c3, c4 = st.columns(4)
-    # Total return
-    total_ret = m.get("total_return_pct", 0.0)
-    c1.metric("💹 トータルの利益率", f"{total_ret}%")
-    
-    # Win rate
-    win_rate = m.get("win_rate_pct", 0.0)
-    c2.metric("🎯 勝率", f"{win_rate}%")
-    
-    # Profit Factor (Recovery Factor)
-    pf = m.get("profit_factor", 0.0)
-    c3.metric(
-        "🔄 回収率 (利益÷損失)", 
-        f"{pf} 倍", 
-        help="これが1.0倍を超えていれば、損よりも利益の方が大きい（黒字）という意味になります。"
-    )
-    
-    # Max Drawdown
-    dd = m.get("max_drawdown_pct", 0.0)
-    c4.metric(
-        "⚠️ 一番大きく資産が減った時の落ち込み幅", 
-        f"{dd}%",
-        help="過去の運用中、一時的にどれだけお財布が凹んだかを示すリスクの目安です。"
-    )
-
-    # Simple chart
-    st.markdown("---")
-    st.markdown("### 📈 お財布のお金の増え方 (資産推移)")
-    eq = run.equity
-    if not eq.empty and "equity" in eq.columns:
-        eq = eq.copy()
-        eq["timestamp"] = pd.to_datetime(eq["timestamp"], utc=True)
-        eq = eq.set_index("timestamp")
-        st.line_chart(eq["equity"])
-    else:
-        st.info("資産推移を描画するためのデータがまだ十分にありません。")
-
-# --- TAB 3: 🤖 AIの判断日記 (AI Diary) ---
+# --- TAB 2: 🤖 AIの判断日記 (AI Diary) ---
+@st.fragment(run_every=LIVE_REFRESH_INTERVAL)
 def render_diary_tab(reports_dir: str) -> None:
     st.markdown("### 📝 AIの判断日記（タイムライン）")
-    st.caption("AIが5分ごとに考えたことや、ニュースに対して下した判断の履歴です。")
-    
-    rt = load_runtime(reports_dir)
-    events = rt["events"]
-    
-    if events.empty:
+    st.caption("時刻は日本時間（JST）。判断・見送り理由・売買結果だけを表示します。")
+
+    entries = load_diary_events(reports_dir, limit=30)
+    if not entries:
         st.info("まだ日記が書かれていません。取引が始まると自動的に記録されます。")
         return
-        
-    # Simplify events
-    # We display events chronologically (recent first)
-    df_disp = events.sort_index(ascending=False).head(30)
-    
-    for _, row in df_disp.iterrows():
-        t_str = row.get("timestamp", "")
-        # Format time if possible
-        try:
-            t_str = pd.Timestamp(t_str).strftime("%m/%d %H:%M:%S")
-        except Exception:
-            pass
-            
-        event_type = row.get("event", "")
-        msg = row.get("message", "")
-        
-        # Friendly icons
-        icon = "ℹ️"
-        if "ORDER" in event_type or "TRADE" in event_type:
-            icon = "🔄 [取引]"
-        elif "SIGNAL" in event_type:
-            icon = "🧠 [AI判断]"
-        elif "ERROR" in event_type:
-            icon = "⚠️ [エラー]"
-            
-        st.write(f"**{t_str}** | {icon} {msg}")
 
-# --- TAB 4: 🧬 AIの自動成長 (ABテスト状況) ---
+    for entry in entries:
+        st.write(f"**{entry['time']}** | {entry['icon']} {entry['message']}")
+
+# --- TAB 3: 🧬 AIの自動成長 (ABテスト状況) ---
+@st.fragment(run_every=LIVE_REFRESH_INTERVAL)
 def render_evolution_tab(reports_dir: str, initial_cash: float) -> None:
     evo = load_evolution(reports_dir)
     champ = evo["champion"]
@@ -378,7 +317,7 @@ def render_evolution_tab(reports_dir: str, initial_cash: float) -> None:
                 "利益率 (利回り)": f"{c_ret:+.2f}%",
                 "勝率": f"{c_win:.1f}%",
                 "仮想取引回数": f"{m.get('num_trades', 0)} 回",
-                "テスト状態": "仮想取引中（シャドウ）" if c.get("status") == "shadow" else "最終審査中（カナリア）",
+                "テスト状態": "仮想取引中（シャドウ）" if str(c.get("status", "")).upper() in ("SHADOW", "BACKTEST_PASSED", "DRAFT") else "最終審査中（カナリア）",
             })
         st.table(pd.DataFrame(rows))
 
@@ -419,16 +358,9 @@ def main() -> None:
     st.sidebar.markdown("---")
     reports_dir = st.sidebar.text_input("📊 レポート出力先ディレクトリ", _reports_dir())
     
-    # Load past run if any
-    all_ids = list_run_ids(reports_dir)
-    run = None
-    if all_ids:
-        run = load_run(reports_dir, "latest")
-
     # Beginner tabs
     tabs = st.tabs([
         "🏠 現在の状況", 
-        "📈 これまでの成績", 
         "🤖 AIの判断日記", 
         "🧬 AIの自動成長 (ABテスト)"
     ])
@@ -436,10 +368,8 @@ def main() -> None:
     with tabs[0]:
         render_status_tab(reports_dir, config_path)
     with tabs[1]:
-        render_performance_tab(run)
-    with tabs[2]:
         render_diary_tab(reports_dir)
-    with tabs[3]:
+    with tabs[2]:
         render_evolution_tab(reports_dir, initial_cash)
 
 if __name__ == "__main__":

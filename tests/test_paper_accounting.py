@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from src.backtest.portfolio import Position
 from src.brokers.base import OrderSide
 from src.brokers.paper_broker import PaperBroker
 from src.runners.feed import FrozenFramesFeed
@@ -107,3 +108,38 @@ def test_runner_restores_paper_position_and_cash(cfg, frames, tmp_path):
     assert restored.position is not None
     assert restored.position.symbol == "TQQQ"
     assert restored.broker.get_positions()[0].quantity == 10.0
+
+
+def test_position_snapshot_contains_dashboard_fields(cfg, frames, tmp_path):
+    paths = {**cfg.paths, "reports_dir": str(tmp_path / "reports")}
+    cfg2 = dataclasses.replace(cfg, paths=paths)
+    runner = PaperRunner(
+        cfg2,
+        ConstantSignalAgent("NO_TRADE"),
+        feed=FrozenFramesFeed(frames, tz=cfg2.runner.timezone),
+    )
+    now = datetime(2024, 1, 10, 11, 0, tzinfo=ET)
+    runner.broker.set_price("SOXL", 102.0)
+    runner.position = Position(
+        symbol="SOXL",
+        direction="UP",
+        entry_time=pd.Timestamp(now),
+        entry_price=100.0,
+        shares=4,
+        entry_bar=1,
+        peak_price=102.0,
+        trade_id=2,
+        entry_reason="test",
+    )
+
+    snapshot = runner._position_snapshots()
+
+    assert snapshot == [{
+        "symbol": "SOXL",
+        "direction": "UP",
+        "entry_price": 100.0,
+        "current_price": 102.0,
+        "shares": 4,
+        "unrealized_pct": 2.0,
+        "trade_id": 2,
+    }]

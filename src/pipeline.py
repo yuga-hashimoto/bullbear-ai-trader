@@ -9,6 +9,7 @@ can place a real order.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -20,7 +21,12 @@ from .backtest.metrics import benchmark_comparison, compute_metrics
 from .config.settings import Config
 from .data.clean import clean_ohlcv
 from .data.store import load_features, load_raw, make_data_source, save_features, save_raw
-from .features.builder import build_feature_matrix, feature_columns, price_col
+from .features.builder import (
+    build_feature_matrix,
+    feature_columns,
+    prepare_feature_matrix,
+    price_col,
+)
 from .labeling.labels import attach_labels, label_col
 from .models.base import DirectionModel
 from .models.factory import make_model
@@ -76,7 +82,11 @@ def build_features(cfg: Config) -> Path:
         raise RuntimeError("no raw data found; run fetch-data first")
     matrix = build_feature_matrix(frames, cfg)
     matrix = attach_labels(matrix, frames, cfg)
+    matrix, health = prepare_feature_matrix(matrix)
     path = save_features(cfg, matrix)
+    health_path = cfg.path("features_dir") / "feature_health_report.json"
+    health_path.parent.mkdir(parents=True, exist_ok=True)
+    health_path.write_text(json.dumps(health, indent=2, sort_keys=True))
     log.info("features saved: %s rows x %s cols -> %s", *matrix.shape, path)
     return path
 

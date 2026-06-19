@@ -107,6 +107,7 @@ runner:
   align_to_bar_boundary: true
   prevent_duplicate_bar_processing: true
   stale_data_threshold_seconds: 600
+  vendor_delay_seconds: 0
   max_agent_latency_seconds: 10
   max_data_errors_before_stop: 3
   max_agent_errors_before_stop: 3
@@ -139,9 +140,10 @@ adaptive_allocation:
   live_enabled: false
 
 paths:
-  raw_dir: data/raw
-  features_dir: data/features
-  artifacts_dir: artifacts
-  reports_dir: reports
+  raw_dir: data_synthetic/raw
+  features_dir: data_synthetic/features
+  signals_dir: data_synthetic/signals
+  artifacts_dir: artifacts_synthetic
+  reports_dir: reports_synthetic
 
 log_level: INFO

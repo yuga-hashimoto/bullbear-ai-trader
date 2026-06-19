@@ -12,7 +12,7 @@ from pathlib import Path
 from ..config.settings import Config
 from .heartbeat import RuntimeWriter
 
-STOP_FLAG = "stop.flag"
+DISABLE_FLAG = "disable.flag"
 
 
 def runtime_dir(cfg: Config) -> Path:
@@ -20,22 +20,33 @@ def runtime_dir(cfg: Config) -> Path:
 
 
 def request_stop(cfg: Config) -> Path:
-    """Write the stop flag (used by the `stop-runner` CLI)."""
+    """Persistently disable the runner until an explicit start request."""
     d = runtime_dir(cfg)
     d.mkdir(parents=True, exist_ok=True)
-    flag = d / STOP_FLAG
-    flag.write_text("stop")
+    flag = d / DISABLE_FLAG
+    flag.write_text("disabled")
+    return flag
+
+
+def request_start(cfg: Config) -> Path:
+    """Clear persistent disable state and return the flag path."""
+    flag = runtime_dir(cfg) / DISABLE_FLAG
+    if flag.exists():
+        flag.unlink()
     return flag
 
 
 def clear_stop_flag(cfg: Config) -> None:
-    flag = runtime_dir(cfg) / STOP_FLAG
-    if flag.exists():
-        flag.unlink()
+    """Backward-compatible alias for explicit resume."""
+    request_start(cfg)
+
+
+def runner_disabled(cfg: Config) -> bool:
+    return (runtime_dir(cfg) / DISABLE_FLAG).exists()
 
 
 def stop_requested(cfg: Config) -> bool:
-    return (runtime_dir(cfg) / STOP_FLAG).exists()
+    return runner_disabled(cfg)
 
 
 class BaseRunner(ABC):

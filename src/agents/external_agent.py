@@ -105,8 +105,11 @@ class ExternalAgentAdapter(BaseAgent):
 
         analysis = self._request_analysis(context, news)
         ids = [str(item["id"]) for item in news]
-        if set(analysis.source_news_ids) != set(ids):
-            raise ValueError("analysis source_news_ids do not match supplied news")
+        unknown_ids = set(analysis.source_news_ids).difference(ids)
+        if unknown_ids:
+            raise ValueError(
+                f"analysis contains unknown source_news_ids: {sorted(unknown_ids)}"
+            )
         self.news_store.mark_seen(ids)
         self.news_store.save_analysis(analysis.to_dict())
 
@@ -147,7 +150,11 @@ class ExternalAgentAdapter(BaseAgent):
                             "thesis": "string",
                             "invalidation": "string",
                             "risk_factors": ["string"],
-                            "source_news_ids": [item["id"] for item in news],
+                            "source_news_ids": (
+                                "non-empty subset of the supplied news IDs that "
+                                "materially support the analysis"
+                            ),
+                            "allowed_source_news_ids": [item["id"] for item in news],
                         },
                     }, ensure_ascii=False),
                 },

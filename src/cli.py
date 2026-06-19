@@ -61,6 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _add_config_arg(sub.add_parser("runner-status"))
     _add_config_arg(sub.add_parser("stop-runner"))
+    _add_config_arg(sub.add_parser("start-runner"))
     _add_config_arg(sub.add_parser("doctor"))
     _add_config_arg(sub.add_parser("readiness"))
 
@@ -87,6 +88,11 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--agent", default=None,
                        choices=["mock", "replay", "external", "local_model"])
         p.add_argument("--signals", default=None)
+
+    p_le = sub.add_parser("run-live-evolution",
+                          help="daily judge on live shadow track records (retire/keep/spawn)")
+    _add_config_arg(p_le)
+    p_le.add_argument("--env", default="paper", choices=["paper", "live"])
 
     for name in ("report", "serve-report"):
         p = sub.add_parser(name)
@@ -274,8 +280,16 @@ def main(argv: list[str] | None = None) -> int:
         from .runners.base import request_stop
 
         flag = request_stop(cfg)
-        print(json.dumps({"stop_flag": str(flag),
-                          "note": "runner will exit on its next loop"}, indent=2))
+        print(json.dumps({"disable_flag": str(flag),
+                          "note": "runner will exit and remain disabled"}, indent=2))
+        return 0
+
+    if args.command == "start-runner":
+        from .runners.base import request_start
+
+        flag = request_start(cfg)
+        print(json.dumps({"disable_flag": str(flag),
+                          "note": "runner is enabled; launchd will start it"}, indent=2))
         return 0
 
     if args.command in ("doctor", "readiness"):
@@ -305,6 +319,13 @@ def main(argv: list[str] | None = None) -> int:
                         "create-challenger", "generate-mutations", "auto-promote",
                         "run-evolution"):
         return _handle_evolution(args, cfg)
+
+    if args.command == "run-live-evolution":
+        from .evolution.live_evolution import run_live_evolution_cycle
+
+        status = run_live_evolution_cycle(cfg, env=args.env)
+        print(json.dumps(status, indent=2, default=str))
+        return 0
 
     if args.command == "serve-report":
         from .reports.runs import resolve_run_id

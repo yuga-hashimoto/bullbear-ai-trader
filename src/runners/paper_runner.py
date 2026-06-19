@@ -26,14 +26,19 @@ from ..backtest.portfolio import Position
 from ..brokers.base import OrderSide, OrderStatus, PositionInfo
 from ..brokers.paper_broker import PaperBroker
 from ..config.settings import Config
-from ..features.builder import build_feature_matrix, feature_columns, price_col
+from ..features.builder import (
+    build_feature_matrix,
+    feature_columns,
+    prepare_feature_matrix,
+    price_col,
+)
 from ..market.calendar import MarketCalendar, make_calendar
 from ..market.sessions import MarketState, to_zone
 from ..risk.engine import EntryContext, RiskEngine
 from ..risk.sizing import PositionSizer, PositionSizingInput
 from ..strategy.strategy import Strategy
 from ..utils.logging import get_logger
-from .base import BaseRunner, clear_stop_flag
+from .base import BaseRunner
 from .feed import MarketDataFeed, make_live_feed
 from .heartbeat import EventType, HeartbeatError
 from .scheduler import bar_floor, interval_to_seconds, next_bar_boundary, seconds_until
@@ -88,11 +93,40 @@ class PaperRunner(BaseRunner):
         self._open_announced = None
         self._broker_disabled = False
         self.peak_equity = cfg.backtest.initial_cash
+        self._last_context: dict[str, Any] | None = None
+        self.shadow = self._make_shadow_book()
         self._restore_state()
+
+    def _make_shadow_book(self):
+        """Live shadow A/B book (challengers decide on the same bar as champion).
+
+        Never affects the champion: if construction fails, shadow is disabled.
+        """
+        if not self.cfg.raw.get("evolution", {}).get("live_shadow", {}).get("enabled", True):
+            return None
+        try:
+            from ..evolution.live_shadow import LiveShadowBook
+
+            return LiveShadowBook(self.cfg)
+        except Exception as exc:  # noqa: BLE001 - shadow must never break the runner
+            log.warning("live shadow disabled (init failed): %s", exc)
+            return None
+
+    def _champion_analysis(self) -> dict[str, Any] | None:
+        store = getattr(getattr(self.agent, "analysis_agent", None), "news_store", None)
+        return store.latest_analysis if store is not None else None
+
+    def _run_shadow(self, now, row, session) -> None:
+        if self.shadow is None or self._last_context is None:
+            return
+        try:
+            self.shadow.on_bar(now, row, self._last_context,
+                               self._champion_analysis(), session)
+        except Exception as exc:  # noqa: BLE001 - isolate shadow from the champion
+            log.warning("live shadow bar error (champion unaffected): %s", exc)
 
     # ================================================================= run
     def run(self) -> None:
-        clear_stop_flag(self.cfg)
         self.writer.emit(EventType.RUNNER_STARTED, {"runner": self.name,
                           "interval": self.interval, "tz": self.tz})
         try:
@@ -143,20 +177,20 @@ class PaperRunner(BaseRunner):
         session = self.calendar.session_for_date(now.date())
         bar_time = bar_floor(now, self.interval_s, self.tz)
         if self.cfg.runner.prevent_duplicate_bar_processing and bar_time == self.last_processed_bar:
-            self._heartbeat(now, "running", state, session, reason="duplicate_bar")
+            self._heartbeat(now, "running", state, session)
             return {"action": "wait_bar", "state": state.value}
 
         frames = self._fetch(now)
         last_bar = self._latest_bar_time(frames)
         self.last_bar_time = last_bar
-        if last_bar is None or (now - last_bar).total_seconds() > self.cfg.runner.stale_data_threshold_seconds:
+        if self._is_stale(now, last_bar):
             return self._handle_stale(now, state, session, last_bar)
         self.data_errors = 0
         self.writer.emit(EventType.MARKET_DATA, {"last_bar": str(last_bar)})
 
         matrix = build_feature_matrix(frames, self.cfg)
+        matrix, _health = prepare_feature_matrix(matrix)
         feat_cols = feature_columns(matrix)
-        matrix = matrix.dropna(subset=feat_cols)
         if matrix.empty:
             self.last_processed_bar = bar_time
             self._heartbeat(now, "running", state, session, reason="warmup")
@@ -176,6 +210,7 @@ class PaperRunner(BaseRunner):
         session_close_str = session.close_dt.strftime("%H:%M")
         self._manage_exit(now, row, session, session_close_str)
         self._maybe_enter(now, row, session, state)
+        self._run_shadow(now, row, session)
 
         self.last_processed_bar = bar_time
         self._heartbeat(now, "running", state, session)
@@ -197,9 +232,7 @@ class PaperRunner(BaseRunner):
         self.data_errors += 1
         self.writer.emit(EventType.MARKET_DATA_STALE,
                          {"last_bar": str(last_bar), "count": self.data_errors})
-        self._heartbeat(now, "error", state, session, reason="stale_data")
-        if self.data_errors >= self.cfg.runner.max_data_errors_before_stop:
-            self._safe_stop(now, "max_data_errors")
+        self._heartbeat(now, "waiting", state, session, reason="stale_data")
         return {"action": "stale", "state": state.value}
 
     def _manage_exit(self, now, row, session, session_close_str) -> None:
@@ -373,6 +406,7 @@ class PaperRunner(BaseRunner):
                                positions=positions, daily_pnl=round(equity - self.day_start_equity, 2),
                                risk_state=risk_state)
         context = self.agent.build_context(inputs)
+        self._last_context = context
         self.writer.emit(EventType.AGENT_CONTEXT, {"timestamp": context["timestamp"]})
         try:
             raw = self._request_with_timeout(context)
@@ -540,6 +574,16 @@ class PaperRunner(BaseRunner):
         times = [df.index[-1] for df in frames.values() if not df.empty]
         return max(times) if times else None
 
+    def _is_stale(self, now, last_bar: pd.Timestamp | None) -> bool:
+        if last_bar is None:
+            return True
+        bar_close = last_bar + pd.Timedelta(seconds=self.interval_s)
+        allowed_delay = (
+            self.cfg.runner.vendor_delay_seconds
+            + self.cfg.runner.stale_data_threshold_seconds
+        )
+        return (pd.Timestamp(now) - bar_close).total_seconds() > allowed_delay
+
     def _equity(self, row) -> float:
         if self.position is None:
             return self.broker.get_cash()
@@ -576,7 +620,7 @@ class PaperRunner(BaseRunner):
             "last_processed_bar_time": str(self.last_processed_bar) if self.last_processed_bar is not None else None,
             "last_signal_time": self.last_signal_time,
             "last_order_time": self.last_order_time,
-            "positions": [p.__dict__ for p in self.broker.get_positions()],
+            "positions": self._position_snapshots(),
             "daily_pnl": round(self._marked_equity() - self.day_start_equity, 2),
             "daily_pnl_jpy": round(
                 (self._marked_equity() - self.day_start_equity)
@@ -594,8 +638,7 @@ class PaperRunner(BaseRunner):
         self._save_state(now)
 
     def _save_state(self, now) -> None:
-        self.writer.write_json("current_positions.json",
-                               [p.__dict__ for p in self.broker.get_positions()])
+        self.writer.write_json("current_positions.json", self._position_snapshots())
         self.writer.write_json("daily_state.json", {
             "date": str(self._current_day),
             "day_start_equity": self.day_start_equity,
@@ -610,3 +653,24 @@ class PaperRunner(BaseRunner):
             "runner_position.json",
             self.position.__dict__ if self.position is not None else None,
         )
+
+    def _position_snapshots(self) -> list[dict[str, Any]]:
+        if self.position is None:
+            return []
+        current_price = float(
+            self.broker.get_market_data(self.position.symbol).get(
+                "last", self.position.entry_price
+            )
+        )
+        return [{
+            "symbol": self.position.symbol,
+            "direction": self.position.direction,
+            "entry_price": self.position.entry_price,
+            "current_price": current_price,
+            "shares": self.position.shares,
+            "unrealized_pct": round(
+                self.position.unrealized_pct(current_price) * 100.0,
+                4,
+            ),
+            "trade_id": self.position.trade_id,
+        }]

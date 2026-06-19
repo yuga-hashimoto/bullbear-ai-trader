@@ -64,6 +64,7 @@ class RunnerConfig:
     align_to_bar_boundary: bool = True
     prevent_duplicate_bar_processing: bool = True
     stale_data_threshold_seconds: int = 180
+    vendor_delay_seconds: int = 0
     max_agent_latency_seconds: int = 30
     max_data_errors_before_stop: int = 3
     max_agent_errors_before_stop: int = 3

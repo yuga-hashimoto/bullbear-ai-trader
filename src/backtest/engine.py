@@ -26,7 +26,7 @@ from ..agents.base import BaseAgent
 from ..agents.context import ContextInputs
 from ..agents.signal_schema import Signal, SignalValidationError, no_trade_signal
 from ..config.settings import Config
-from ..features.builder import feature_columns, price_col
+from ..features.builder import feature_columns, prepare_feature_matrix, price_col
 from ..risk.engine import EntryContext, RiskEngine
 from ..risk.sizing import PositionSizer, PositionSizingInput
 from ..strategy.strategy import Strategy, TradeIntent
@@ -83,8 +83,8 @@ class BacktestEngine:
     # ------------------------------------------------------------------ run
     def run(self, matrix: pd.DataFrame) -> BacktestResult:
         cfg = self.cfg
+        matrix, _health = prepare_feature_matrix(matrix)
         feat_cols = feature_columns(matrix)
-        matrix = matrix.dropna(subset=feat_cols).sort_index()
         if matrix.empty:
             raise ValueError("feature matrix is empty after dropping warmup NaNs")
 

@@ -24,6 +24,30 @@ def feature_columns(df: pd.DataFrame) -> list[str]:
     return [c for c in df.columns if c.startswith(FEAT_PREFIX)]
 
 
+def prepare_feature_matrix(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, object]]:
+    """Remove unusable features, then drop only genuine warmup rows."""
+    feat_cols = feature_columns(df)
+    nan_ratios = {
+        col: float(df[col].isna().mean())
+        for col in feat_cols
+    }
+    dropped = [col for col in feat_cols if df[col].isna().all()]
+    usable = [col for col in feat_cols if col not in dropped]
+    prepared = df.drop(columns=dropped)
+    if usable:
+        prepared = prepared.dropna(subset=usable)
+    health: dict[str, object] = {
+        "rows": int(len(prepared)),
+        "feature_count_before": len(feat_cols),
+        "feature_count_after": len(usable),
+        "dropped_all_nan_features": dropped,
+        "nan_ratio_by_feature": nan_ratios,
+    }
+    return prepared.sort_index(), health
+
+
 def price_col(symbol: str, field: str) -> str:
     return f"{PX_PREFIX}{symbol}__{field}"
 
@@ -41,12 +65,15 @@ def build_symbol_features(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     # Trend / mean-reversion.
     out[f"{p}ma_dev_20"] = ind.ma_deviation(close, 20)
     out[f"{p}ma_dev_50"] = ind.ma_deviation(close, 50)
-    out[f"{p}vwap_dev"] = ind.vwap_deviation(df)
+    has_volume = bool(vol.notna().any() and vol.fillna(0.0).gt(0.0).any())
+    if has_volume:
+        out[f"{p}vwap_dev"] = ind.vwap_deviation(df)
     out[f"{p}rsi_14"] = ind.rsi(close, 14)
     out[f"{p}macd_diff"] = ind.macd_diff(close)
     out[f"{p}atr_pct"] = ind.atr_pct(high, low, close, 14)
     out[f"{p}vol_20"] = ind.volatility(close, 20)
-    out[f"{p}volchg_20"] = ind.volume_change(vol, 20)
+    if has_volume:
+        out[f"{p}volchg_20"] = ind.volume_change(vol, 20)
 
     # Session-relative location.
     out[f"{p}intraday_chg"] = ind.intraday_change(df)

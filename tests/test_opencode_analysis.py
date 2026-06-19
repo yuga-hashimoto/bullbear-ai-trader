@@ -100,3 +100,73 @@ def test_opencode_analysis_is_embedded_in_no_trade_signal(mock_post, monkeypatch
     assert result["action"] == "NO_TRADE"
     assert result["raw_response"]["analysis"]["direction"] == "UP"
     assert agent.news_store.is_seen("news-1")
+
+
+@patch("src.agents.external_agent.requests.post")
+def test_opencode_accepts_relevant_subset_of_supplied_news_ids(
+    mock_post, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "key")
+    agent = ExternalAgentAdapter(
+        AgentConfig(type="external", endpoint="https://example.invalid"),
+        state_dir=tmp_path,
+    )
+    agent._fetch_news = MagicMock(return_value=[
+        {"id": "news-1", "title": "Relevant", "summary": "", "pubDate": ""},
+        {"id": "news-2", "title": "Irrelevant", "summary": "", "pubDate": ""},
+    ])
+    response = MagicMock()
+    response.json.return_value = {"choices": [{"message": {"content": json.dumps({
+        "timestamp": "2026-06-18T10:00:00-04:00",
+        "valid_until": "2026-06-18T10:30:00-04:00",
+        "target_family": "NASDAQ",
+        "direction": "UP",
+        "confidence": 0.8,
+        "thesis": "news-1 is the relevant catalyst",
+        "invalidation": "market rejects news",
+        "risk_factors": [],
+        "source_news_ids": ["news-1"],
+    })}}]}
+    mock_post.return_value = response
+
+    result = agent.request_signal({
+        "timestamp": "2026-06-18T10:00:00-04:00",
+        "symbols": {},
+    })
+
+    assert result["raw_response"]["analysis"]["source_news_ids"] == ["news-1"]
+    assert agent.news_store.is_seen("news-1")
+    assert agent.news_store.is_seen("news-2")
+
+
+@patch("src.agents.external_agent.requests.post")
+def test_opencode_rejects_unknown_source_news_id(
+    mock_post, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "key")
+    agent = ExternalAgentAdapter(
+        AgentConfig(type="external", endpoint="https://example.invalid"),
+        state_dir=tmp_path,
+    )
+    agent._fetch_news = MagicMock(return_value=[
+        {"id": "news-1", "title": "Known", "summary": "", "pubDate": ""},
+    ])
+    response = MagicMock()
+    response.json.return_value = {"choices": [{"message": {"content": json.dumps({
+        "timestamp": "2026-06-18T10:00:00-04:00",
+        "valid_until": "2026-06-18T10:30:00-04:00",
+        "target_family": "NASDAQ",
+        "direction": "UP",
+        "confidence": 0.8,
+        "thesis": "fabricated citation",
+        "invalidation": "market rejects news",
+        "risk_factors": [],
+        "source_news_ids": ["unknown-news"],
+    })}}]}
+    mock_post.return_value = response
+
+    with pytest.raises(ValueError, match="unknown source_news_ids"):
+        agent.request_signal({
+            "timestamp": "2026-06-18T10:00:00-04:00",
+            "symbols": {},
+        })

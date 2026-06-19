@@ -253,7 +253,8 @@ CLI: `python -m src.cli compare-runs --run-ids <id1> <id2>`、または Dashboar
 python -m src.cli run-paper     --config config/default.yaml --agent mock
 python -m src.cli run-paper     --config config/default.yaml --agent external   # 未設定時はNO_TRADE/fallback
 python -m src.cli runner-status --config config/default.yaml      # heartbeat.json を表示
-python -m src.cli stop-runner   --config config/default.yaml      # 次ループで安全停止
+python -m src.cli stop-runner   --config config/default.yaml      # 永続停止
+python -m src.cli start-runner  --config config/default.yaml      # launchd運用を再開
 python -m src.cli run-live      --config config/default.yaml --enable-live-trading  # 必ず拒否される
 ```
 

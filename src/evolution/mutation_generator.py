@@ -20,7 +20,21 @@ from . import guardrails as gr
 _INT_PARAMS = {"risk.max_holding_minutes", "risk.no_trade_first_minutes",
                "risk.no_new_entry_last_minutes", "risk.max_trades_per_day",
                "risk.max_consecutive_losses", "strategy.max_concurrent_positions"}
-_MUTABLE = [k for k in gr.PARAM_BOUNDS if k != "strategy.max_concurrent_positions"]
+
+# High-impact "genes": these bind on (almost) every trade, so mutating them
+# produces challengers that genuinely diverge from the champion. We deliberately
+# exclude rarely-binding knobs (max_trades_per_day, max_consecutive_losses,
+# no_trade_first/last_minutes) and strategy.expected_return_weight, which the
+# live numeric/fusion decision path does not consume (a "dead gene" that would
+# leave a challenger identical to the base). All remain guardrail-bounded.
+_HIGH_IMPACT = [
+    "risk.confidence_threshold",    # changes WHICH signals become trades (entries)
+    "risk.take_profit_pct",         # exit target — affects winning trades
+    "risk.trailing_stop_pct",       # exit — affects trades that peak then fade
+    "risk.max_loss_per_trade_pct",  # stop-loss — affects losing trades + sizing
+    "risk.max_holding_minutes",     # time exit — affects trades that neither TP nor stop
+]
+_MUTABLE = [k for k in _HIGH_IMPACT if k in gr.PARAM_BOUNDS]
 
 
 def _sample_value(key: str, rng: random.Random) -> Any:

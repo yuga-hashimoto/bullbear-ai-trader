@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import pytest
 
 from src.backtest.engine import BacktestEngine
 from src.backtest.metrics import benchmark_comparison, compute_metrics
 from src.config.settings import RiskConfig
-from src.reports.loader import list_run_ids, load_run, resolve_run_id
+from src.reports.loader import (
+    list_run_ids,
+    load_run,
+    load_runtime_performance,
+    resolve_run_id,
+)
 from src.reports.report import write_reports
 from src.reports.runs import new_run_id, run_dir, save_run
 from tests.conftest import ConstantSignalAgent
@@ -61,3 +67,53 @@ def test_dashboard_loader_handles_rejected_only_run(cfg, labeled_matrix, tmp_pat
     assert run.trades.empty
     assert run.counters["rejected_signals"] > 0
     assert list_run_ids(cfg2.path("reports_dir")) == [run_id]
+
+
+def test_run_ids_do_not_collide_within_the_same_second():
+    first = new_run_id()
+    second = new_run_id()
+
+    assert first != second
+
+
+def test_runtime_performance_uses_marked_equity_and_closed_paper_trades(tmp_path):
+    runtime = tmp_path / "reports" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "heartbeat.json").write_text(json.dumps({
+        "timestamp": "2026-06-18T10:12:56-04:00",
+        "daily_pnl": -8.76,
+        "daily_pnl_jpy": -1313.93,
+    }))
+    (runtime / "daily_state.json").write_text(json.dumps({
+        "marked_equity": 6657.91,
+        "cash": 6657.91,
+    }))
+    events = [
+        {"event": "POSITION_CLOSED", "net_pnl": -8.76},
+        {"event": "POSITION_CLOSED", "net_pnl": 12.00},
+        *[{"event": "HEARTBEAT"} for _ in range(60)],
+    ]
+    (runtime / "paper_events.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in events)
+    )
+
+    perf = load_runtime_performance(tmp_path / "reports", initial_cash=6666.67)
+
+    assert perf["current_equity"] == 6657.91
+    assert perf["total_pnl"] == pytest.approx(-8.76)
+    assert perf["total_return_pct"] == pytest.approx(-0.1314, abs=0.0001)
+    assert perf["win_rate_pct"] == 50.0
+    assert perf["closed_trades"] == 2
+
+
+def test_runtime_performance_has_no_win_rate_before_any_closed_trade(tmp_path):
+    runtime = tmp_path / "reports" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "daily_state.json").write_text(json.dumps({
+        "marked_equity": 6666.67,
+    }))
+
+    perf = load_runtime_performance(tmp_path / "reports", initial_cash=6666.67)
+
+    assert perf["win_rate_pct"] is None
+    assert perf["closed_trades"] == 0

@@ -88,7 +88,7 @@ strategy:
 
 account:
   base_currency: JPY
-  initial_capital_jpy: 1000000
+  initial_capital_jpy: 1000000       # 100万円 (元本は据え置き)
   usd_jpy_rate: 150.0
 
 # --- Risk engine (AUTHORITATIVE over the agent; NO_TRADE is the safe default) -
@@ -97,7 +97,7 @@ risk:
   max_loss_per_trade_pct: 0.7      # stop-loss
   take_profit_pct: 1.2
   trailing_stop_pct: 0.5
-  max_daily_loss_pct: 2.0          # halt trading for the day when breached
+  max_daily_loss_pct: 3.0          # halt trading for the day when breached
   max_trades_per_day: 3
   max_consecutive_losses: 2
   max_holding_minutes: 120
@@ -107,10 +107,10 @@ risk:
   max_spread_pct: 0.15             # skip if quoted spread wider than this
   max_atr_pct: 5.0                 # skip if ATR% (volatility) too high
   min_bars_between_same_symbol: 3  # cooldown after exiting a symbol
-  max_loss_per_trade_jpy: 10000
-  max_daily_loss_jpy: 50000
+  max_loss_per_trade_jpy: 40000    # 1トレードの購入枠 (was 10,000) — 建玉を約4倍に拡大
+  max_daily_loss_jpy: 60000        # daily halt (was 50,000)
   max_drawdown_pct: 15.0
-  max_portfolio_risk_pct: 3.0
+  max_portfolio_risk_pct: 5.0      # was 3.0 — per-trade risk budget が縛らないよう余裕
   overnight_gap_risk_pct: 5.0
   allow_overnight_positions: true
 
@@ -151,6 +151,7 @@ runner:
   align_to_bar_boundary: true
   prevent_duplicate_bar_processing: true
   stale_data_threshold_seconds: 180
+  vendor_delay_seconds: 600          # Yahoo bars are timestamped at bar start and may publish late
   max_agent_latency_seconds: 30
   max_data_errors_before_stop: 3
   max_agent_errors_before_stop: 3
@@ -175,6 +176,14 @@ evolution:
   mutations_per_day: 3
   promotion_policy_file: config/promotion_policy.yaml
   rollback_policy_file: config/rollback_policy.yaml
+  live_shadow:                         # challengers decide on the SAME bar as champion
+    enabled: true                      # virtual only — never touches real capital
+    num_challengers: 5                 # how many challengers race live
+    capital: 6666.67                   # virtual starting equity per challenger (USD), matches champion
+  # Daily judge (run-live-evolution, after US close) — keep good DNA, drop bad.
+  canary_min_trades: 5                 # live trades before a winner can graduate to canary
+  retire_min_trades: 5                 # min live trades before a loser may be retired
+  max_retire_per_cycle: 3              # cap retirements per day (gradual churn)
 
 adaptive_allocation:
   enabled: true
