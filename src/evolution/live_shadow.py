@@ -302,11 +302,13 @@ class LiveShadowBook:
         if missing <= 0:
             return
         seed = random.Random().randint(0, 10_000_000)
-        for cand in generate_mutations(self.base_cfg, n=missing, seed=seed):
+        avoid = [c.config_patch for c in active]  # never duplicate existing DNA
+        for cand in generate_mutations(self.base_cfg, n=missing, seed=seed, avoid=avoid):
             chal = self.registry.create_challenger(cand["config_patch"], source="mutation",
                                                    notes=f"live-shadow from {cand['candidate_id']}")
             chal.status = SHADOW
             self.registry.update_challenger(chal)
+            active.append(chal)
 
     def _build(self) -> list[ShadowChallenger]:
         out: list[ShadowChallenger] = []

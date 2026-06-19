@@ -50,19 +50,31 @@ def _sample_value(key: str, rng: random.Random) -> Any:
     return round(rng.uniform(lo, hi), 5)
 
 
-def propose_patch(base_cfg: Config, rng: random.Random, k: int = 2) -> dict[str, Any]:
-    """Propose a guardrail-valid patch mutating up to ``k`` parameters, basing them on the current Champion's patch."""
-    from .registry import EvolutionRegistry
-    reports_dir = base_cfg.path("reports_dir")
-    registry = EvolutionRegistry(reports_dir)
-    
-    current_patch = {}
-    try:
-        champ = registry.load_champion()
-        if champ and champ.config_patch:
-            current_patch = champ.config_patch
-    except Exception:
-        pass  # If no champion exists yet, fallback to base config
+def _patch_key(patch: dict[str, Any]) -> tuple:
+    """Canonical, hashable key so duplicate DNA can be detected/avoided."""
+    return tuple(sorted((k, round(float(v), 5)) for k, v in patch.items()))
+
+
+def propose_patch(base_cfg: Config, rng: random.Random, k: int = 2,
+                  base_patch: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Propose a guardrail-valid patch mutating up to ``k`` parameters.
+
+    Derives from ``base_patch`` when given (the best performer's DNA), otherwise
+    from the current Champion's patch — so the gene pool always builds on the
+    best-known-good configuration rather than the raw base.
+    """
+    if base_patch is not None:
+        current_patch = dict(base_patch)
+    else:
+        from .registry import EvolutionRegistry
+        registry = EvolutionRegistry(base_cfg.path("reports_dir"))
+        current_patch = {}
+        try:
+            champ = registry.load_champion()
+            if champ and champ.config_patch:
+                current_patch = dict(champ.config_patch)
+        except Exception:
+            pass  # If no champion exists yet, fallback to base config
 
     # Helper to get parameter value from Champion or Base Config
     def get_base_value(key: str) -> Any:
@@ -110,17 +122,31 @@ def generate_mutations(
     n: int = 3,
     seed: int = 0,
     candidates_dir: str | Path | None = None,
+    base_patch: dict[str, Any] | None = None,
+    avoid: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Generate ``n`` candidate patches and persist them under candidates_dir."""
+    """Generate ``n`` DISTINCT candidate patches and persist them.
+
+    ``base_patch`` seeds the mutations from the best performer's DNA. ``avoid``
+    lists existing patches that the new candidates must NOT duplicate — combined
+    with intra-batch dedup this guarantees no two live challengers are identical.
+    """
     rng = random.Random(seed)
     out_dir = Path(candidates_dir or (base_cfg.path("reports_dir") / "candidates"))
     out_dir.mkdir(parents=True, exist_ok=True)
+    seen: set[tuple] = {_patch_key(p) for p in (avoid or []) if p}
     candidates: list[dict[str, Any]] = []
-    for i in range(n):
-        patch = propose_patch(base_cfg, rng)
+    attempts = 0
+    while len(candidates) < n and attempts < n * 40:
+        attempts += 1
+        patch = propose_patch(base_cfg, rng, base_patch=base_patch)
         if not patch:
             continue
-        cand_id = f"cand_{seed}_{i}"
+        key = _patch_key(patch)
+        if key in seen:  # identical to an existing or already-spawned challenger
+            continue
+        seen.add(key)
+        cand_id = f"cand_{seed}_{len(candidates)}"
         cdir = out_dir / cand_id
         cdir.mkdir(parents=True, exist_ok=True)
         (cdir / "candidate.yaml").write_text(yaml.safe_dump({"candidate_id": cand_id,

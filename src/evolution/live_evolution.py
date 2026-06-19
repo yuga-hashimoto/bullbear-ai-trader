@@ -147,13 +147,20 @@ def run_live_evolution_cycle(cfg: Config, env: str = "paper",
                             {"challenger_id": c.challenger_id, "metrics": c.metrics})
             retired.append(c.challenger_id)
 
-        # 6) spawn fresh mutations to refill the pool (keep good DNA) ------
+        # 6) spawn fresh mutations to refill the pool, derived from the BEST
+        #    performer (champion vs best survivor), and never duplicating an
+        #    existing challenger's DNA -----------------------------------------
         best_survivor = max(survivors, key=lambda c: _reward(c.metrics), default=None)
-        parent_id = best_survivor.challenger_id if best_survivor else champion.champion_id
+        if best_survivor is not None and _reward(best_survivor.metrics) > _reward(champion.metrics):
+            base_patch, parent_id = best_survivor.config_patch, best_survivor.challenger_id
+        else:
+            base_patch, parent_id = champion.config_patch, champion.champion_id
+        avoid = [s.config_patch for s in survivors]
         n_new = max(0, num_challengers - len(survivors))
         rng_seed = seed if seed is not None else random.Random().randint(0, 10_000_000)
         spawned: list[str] = []
-        for cand in generate_mutations(cfg, n=n_new, seed=rng_seed):
+        for cand in generate_mutations(cfg, n=n_new, seed=rng_seed,
+                                       base_patch=base_patch, avoid=avoid):
             chal = Challenger.create(cand["config_patch"], source="mutation",
                                      notes=f"spawned from {parent_id}")
             chal.status = SHADOW
