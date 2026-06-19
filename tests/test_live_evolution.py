@@ -30,10 +30,10 @@ def test_loser_retired_winner_kept_pool_refilled(cfg, tmp_path):
     c = _cfg(cfg, tmp_path, num=3)
     reg = EvolutionRegistry(c.path("reports_dir"))
     reg.ensure_champion()
-    loser = _seed_challenger(reg, {"risk.take_profit_pct": 1.1},
+    loser = _seed_challenger(reg, {"risk.trailing_stop_pct": 3.1},
                              {"num_trades": 5, "net_pnl_after_costs": -500.0,
                               "total_return_pct": -0.5, "win_rate_pct": 20.0, "equity": 99500.0})
-    winner = _seed_challenger(reg, {"risk.take_profit_pct": 1.2},
+    winner = _seed_challenger(reg, {"risk.trailing_stop_pct": 3.2},
                               {"num_trades": 5, "net_pnl_after_costs": 800.0,
                                "total_return_pct": 0.8, "win_rate_pct": 80.0, "equity": 100800.0})
 
@@ -60,7 +60,7 @@ def test_no_retirement_without_enough_trades(cfg, tmp_path):
     c = _cfg(cfg, tmp_path, num=3)
     reg = EvolutionRegistry(c.path("reports_dir"))
     reg.ensure_champion()
-    _seed_challenger(reg, {"risk.take_profit_pct": 1.1},
+    _seed_challenger(reg, {"risk.trailing_stop_pct": 3.1},
                      {"num_trades": 1, "net_pnl_after_costs": -500.0})
 
     status = run_live_evolution_cycle(c, seed=2)

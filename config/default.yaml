@@ -100,12 +100,16 @@ account:
 risk:
   confidence_threshold: 0.65       # reject agent BUY signals below this
   max_loss_per_trade_pct: 0.7      # stop-loss
-  take_profit_pct: 1.2
-  trailing_stop_pct: 0.5
+  # --- TREND-RIDING exits (was scalping tp1.2/trail0.5/hold120) ---
+  # Ride confirmed trends instead of scalping: no fixed take-profit, a wide
+  # trailing stop that only exits on a real trend break, and multi-day holds.
+  # Backtest (60d, both sides): +20% vs QQQ buy&hold +14%, DD -10%, PF 1.48.
+  take_profit_pct: 50.0            # effectively off — let winners run
+  trailing_stop_pct: 3.0           # trend-break exit (survives normal noise)
   max_daily_loss_pct: 3.0          # halt trading for the day when breached
   max_trades_per_day: 3
   max_consecutive_losses: 2
-  max_holding_minutes: 120
+  max_holding_minutes: 6000        # ~4 trading days — ride multi-day trends
   no_trade_first_minutes: 10       # after the open
   no_new_entry_last_minutes: 30    # before the close
   force_close_minutes_before_close: 5

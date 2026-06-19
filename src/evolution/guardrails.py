@@ -23,9 +23,9 @@ PATCHABLE_SECTIONS = {"risk", "strategy", "agent"}
 PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "risk.confidence_threshold": (0.40, 0.90),
     "risk.max_loss_per_trade_pct": (0.30, 1.20),
-    "risk.take_profit_pct": (0.40, 3.00),
-    "risk.trailing_stop_pct": (0.20, 1.50),
-    "risk.max_holding_minutes": (15, 240),
+    "risk.take_profit_pct": (3.00, 60.0),     # trend-riding: take-profit stays "off"
+    "risk.trailing_stop_pct": (1.50, 5.00),   # trend-break exit (wide)
+    "risk.max_holding_minutes": (1000, 8000),  # multi-day holds
     "risk.no_trade_first_minutes": (0, 60),
     "risk.no_new_entry_last_minutes": (10, 90),
     "risk.max_trades_per_day": (1, 10),

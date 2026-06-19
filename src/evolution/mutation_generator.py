@@ -28,12 +28,12 @@ _INT_PARAMS = {"risk.max_holding_minutes", "risk.no_trade_first_minutes",
 # live numeric/fusion decision path does not consume (a "dead gene" that would
 # leave a challenger identical to the base). All remain guardrail-bounded.
 _HIGH_IMPACT = [
-    # exit / risk genes
+    # exit / risk genes (trend-riding: take_profit is intentionally NOT a gene —
+    # it stays "off" so challengers can't regress into scalpers)
     "risk.confidence_threshold",    # changes WHICH signals become trades (entries)
-    "risk.take_profit_pct",         # exit target — affects winning trades
-    "risk.trailing_stop_pct",       # exit — affects trades that peak then fade
+    "risk.trailing_stop_pct",       # the trend-break exit — the key knob
     "risk.max_loss_per_trade_pct",  # stop-loss — affects losing trades + sizing
-    "risk.max_holding_minutes",     # time exit — affects trades that neither TP nor stop
+    "risk.max_holding_minutes",     # how long a trend is allowed to ride
     # V9 entry genes — challengers explore the validated entry neighbourhood
     "strategy.numeric_min_vwap_dev",
     "strategy.numeric_min_strength",
