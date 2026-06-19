@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bullbear.dualmomentum</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/yu-ga/Library/Application Support/BullBear/run-dual-momentum-launchd.sh</string>
+  </array>
+  <!-- Run on the 1st of each month at 08:00 JST, after the prior month's US
+       close, to set the new month's position. Also runs at load so the state
+       file is always fresh. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Day</key>
+    <integer>1</integer>
+    <key>Hour</key>
+    <integer>8</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>/Users/yu-ga/Library/Logs/bullbear-dualmomentum.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/yu-ga/Library/Logs/bullbear-dualmomentum.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+</dict>
+</plist>

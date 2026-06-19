@@ -94,6 +94,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_arg(p_le)
     p_le.add_argument("--env", default="paper", choices=["paper", "live"])
 
+    p_dm = sub.add_parser("run-dual-momentum",
+                          help="monthly dual-momentum recommendation + paper equity")
+    _add_config_arg(p_dm)
+    p_dm.add_argument("--leverage", type=float, default=1.5)
+    p_dm.add_argument("--capital", type=float, default=1_000_000.0)
+
     for name in ("report", "serve-report"):
         p = sub.add_parser(name)
         _add_config_arg(p)
@@ -325,6 +331,18 @@ def main(argv: list[str] | None = None) -> int:
 
         status = run_live_evolution_cycle(cfg, env=args.env)
         print(json.dumps(status, indent=2, default=str))
+        return 0
+
+    if args.command == "run-dual-momentum":
+        from .runners.dual_momentum_runner import DualMomentumRunner
+        from .strategy.dual_momentum import DualMomentumConfig
+
+        runner = DualMomentumRunner(
+            reports_dir=cfg.path("reports_dir"),
+            cfg=DualMomentumConfig(leverage=args.leverage),
+            capital=args.capital,
+        )
+        print(json.dumps(runner.run(), indent=2, ensure_ascii=False))
         return 0
 
     if args.command == "serve-report":
