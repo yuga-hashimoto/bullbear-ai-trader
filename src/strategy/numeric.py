@@ -32,6 +32,17 @@ class NumericSignalStrategy:
         self.rsi_bull_max = rsi_bull_max          # skip longs once overbought
         self.rsi_bear_min = rsi_bear_min          # skip shorts once oversold
 
+    @classmethod
+    def from_config(cls, strategy_cfg: Any, base_confidence: float = 0.66) -> "NumericSignalStrategy":
+        """Build from a StrategyConfig so challengers can tune the entry genes."""
+        return cls(
+            base_confidence=base_confidence,
+            min_vwap_dev=getattr(strategy_cfg, "numeric_min_vwap_dev", 0.0003),
+            min_strength=getattr(strategy_cfg, "numeric_min_strength", 0.0008),
+            rsi_bull_max=getattr(strategy_cfg, "numeric_rsi_bull_max", 72.0),
+            rsi_bear_min=getattr(strategy_cfg, "numeric_rsi_bear_min", 28.0),
+        )
+
     def _candidate(self, block: dict[str, Any] | None) -> tuple[str, float] | None:
         if not block:
             return None

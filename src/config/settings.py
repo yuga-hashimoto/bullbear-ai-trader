@@ -26,6 +26,11 @@ class LabelingConfig:
 class StrategyConfig:
     max_concurrent_positions: int = 1
     expected_return_weight: float = 1.0
+    # V9 numeric entry "genes" (challengers tune these around the validated base).
+    numeric_min_vwap_dev: float = 0.0003     # min |close-VWAP|/VWAP to act
+    numeric_min_strength: float = 0.0008     # min |3-bar return|
+    numeric_rsi_bull_max: float = 72.0       # skip longs once overbought
+    numeric_rsi_bear_min: float = 28.0       # skip shorts once oversold
 
 
 @dataclass(frozen=True)

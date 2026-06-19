@@ -28,11 +28,17 @@ _INT_PARAMS = {"risk.max_holding_minutes", "risk.no_trade_first_minutes",
 # live numeric/fusion decision path does not consume (a "dead gene" that would
 # leave a challenger identical to the base). All remain guardrail-bounded.
 _HIGH_IMPACT = [
+    # exit / risk genes
     "risk.confidence_threshold",    # changes WHICH signals become trades (entries)
     "risk.take_profit_pct",         # exit target — affects winning trades
     "risk.trailing_stop_pct",       # exit — affects trades that peak then fade
     "risk.max_loss_per_trade_pct",  # stop-loss — affects losing trades + sizing
     "risk.max_holding_minutes",     # time exit — affects trades that neither TP nor stop
+    # V9 entry genes — challengers explore the validated entry neighbourhood
+    "strategy.numeric_min_vwap_dev",
+    "strategy.numeric_min_strength",
+    "strategy.numeric_rsi_bull_max",
+    "strategy.numeric_rsi_bear_min",
 ]
 _MUTABLE = [k for k in _HIGH_IMPACT if k in gr.PARAM_BOUNDS]
 
@@ -41,7 +47,7 @@ def _sample_value(key: str, rng: random.Random) -> Any:
     lo, hi = gr.PARAM_BOUNDS[key]
     if key in _INT_PARAMS:
         return rng.randint(int(lo), int(hi))
-    return round(rng.uniform(lo, hi), 3)
+    return round(rng.uniform(lo, hi), 5)
 
 
 def propose_patch(base_cfg: Config, rng: random.Random, k: int = 2) -> dict[str, Any]:
@@ -87,7 +93,7 @@ def propose_patch(base_cfg: Config, rng: random.Random, k: int = 2) -> dict[str,
                 if key in _INT_PARAMS:
                     patch[key] = int(round(mutated_val))
                 else:
-                    patch[key] = round(mutated_val, 3)
+                    patch[key] = round(mutated_val, 5)
             else:
                 patch[key] = _sample_value(key, rng)
                 

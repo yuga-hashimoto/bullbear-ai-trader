@@ -53,7 +53,7 @@ def make_agent(
             )
             from .hybrid_agent import HybridAnalysisAgent
 
-            return HybridAnalysisAgent(analysis)
+            return HybridAnalysisAgent(analysis, strategy_cfg=cfg.strategy)
         except ExternalAgentNotConfiguredError:
             if cfg.agent.fallback_to_no_trade:
                 from .mock_agent import MockAgent

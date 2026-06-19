@@ -85,6 +85,11 @@ model_params:
 strategy:
   max_concurrent_positions: 4
   expected_return_weight: 1.0
+  # V9 numeric entry genes (validated base; challengers tune around these)
+  numeric_min_vwap_dev: 0.0003       # min |close-VWAP|/VWAP to act
+  numeric_min_strength: 0.0008       # min |3-bar return|
+  numeric_rsi_bull_max: 72.0         # skip longs once overbought
+  numeric_rsi_bear_min: 28.0         # skip shorts once oversold
 
 account:
   base_currency: JPY

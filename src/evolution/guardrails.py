@@ -32,6 +32,12 @@ PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "risk.max_consecutive_losses": (1, 5),
     "strategy.max_concurrent_positions": (1, 2),
     "strategy.expected_return_weight": (0.0, 5.0),
+    # V9 entry genes — tight neighbourhood around the validated base so
+    # challengers stay "V9 derivatives" rather than wild variants.
+    "strategy.numeric_min_vwap_dev": (0.0, 0.0008),
+    "strategy.numeric_min_strength": (0.0004, 0.0018),
+    "strategy.numeric_rsi_bull_max": (65.0, 80.0),
+    "strategy.numeric_rsi_bear_min": (20.0, 35.0),
 }
 
 # Fields that may only be *tightened* vs the base config (never loosened).

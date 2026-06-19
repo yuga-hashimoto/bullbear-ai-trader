@@ -18,9 +18,13 @@ class HybridAnalysisAgent(BaseAgent):
         analysis_agent: ExternalAgentAdapter,
         numeric: NumericSignalStrategy | None = None,
         fusion: SignalFusion | None = None,
+        strategy_cfg: object | None = None,
     ) -> None:
         self.analysis_agent = analysis_agent
-        self.numeric = numeric or NumericSignalStrategy()
+        self.numeric = numeric or (
+            NumericSignalStrategy.from_config(strategy_cfg)
+            if strategy_cfg is not None else NumericSignalStrategy()
+        )
         self.fusion = fusion or SignalFusion()
 
     def request_signal(self, context: dict[str, Any]) -> dict[str, Any]:

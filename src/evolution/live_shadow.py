@@ -58,7 +58,7 @@ class ShadowChallenger:
         self.strategy = Strategy(self.cfg)
         self.risk = RiskEngine(self.cfg.risk)
         self.sizer = PositionSizer()
-        self.numeric = NumericSignalStrategy()
+        self.numeric = NumericSignalStrategy.from_config(self.cfg.strategy)
         self.fusion = SignalFusion()
 
         self.broker = PaperBroker(cash=capital, costs=self.cfg.costs)
