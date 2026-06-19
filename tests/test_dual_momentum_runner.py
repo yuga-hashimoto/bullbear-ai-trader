@@ -21,19 +21,32 @@ def _monthly(n: int = 24) -> pd.DataFrame:
     }, index=idx)
 
 
-def test_runner_writes_state_and_tracks_paper_equity(tmp_path):
+def test_first_run_starts_paper_at_capital(tmp_path):
+    # Paper account starts at the inception month at exactly `capital` (no
+    # 20-year backtest masquerading as held assets).
     runner = DualMomentumRunner(reports_dir=tmp_path / "reports",
                                 cfg=DualMomentumConfig(leverage=1.5, lookbacks=(1, 2, 3)),
                                 capital=1_000_000.0)
     state = runner.run(monthly=_monthly())
 
-    assert state["recommendation"]["asset"] == "QQQ"      # rode the strongest
-    assert state["recommendation"]["leverage"] == 1.5
-    assert state["paper"]["equity"] > 1_000_000.0          # uptrend -> grew
-    # persisted to disk for the dashboard / scheduler
+    assert state["recommendation"]["asset"] == "QQQ"      # current pick (strongest)
+    assert state["paper"]["equity"] == 1_000_000.0         # starts AT capital, no fake gains
+    assert state["paper"]["months"] == 0
+    assert state["backtest_reference"]["cagr_pct"] is not None  # reference shown separately
     saved = json.loads((tmp_path / "reports" / "runtime" / "dual_momentum.json").read_text())
-    assert saved["paper"]["equity"] == state["paper"]["equity"]
-    assert len(saved["history"]) >= 1
+    assert saved["inception_month"] == state["inception_month"]
+
+
+def test_forward_paper_accrues_after_inception(tmp_path):
+    # With an inception set in the past, the forward months accrue real returns.
+    runner = DualMomentumRunner(reports_dir=tmp_path / "reports",
+                                cfg=DualMomentumConfig(leverage=1.5, lookbacks=(1, 2, 3)),
+                                capital=1_000_000.0)
+    monthly = _monthly(n=24)
+    state = runner.run(monthly=monthly, inception_override="2022-06")
+    assert state["paper"]["months"] > 0
+    assert state["paper"]["equity"] > 1_000_000.0          # uptrend forward -> grew
+    assert len(state["equity_curve"]) >= 2
 
 
 def test_runner_goes_to_cash_in_a_bear_universe(tmp_path):

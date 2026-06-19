@@ -108,22 +108,35 @@ def main() -> None:
         f'<span class="pill {pill[1]}"><span class="dot"></span>{pill[0]}</span></div>'
         f'<div class="safe">{SAFETY_INFO}</div>', unsafe_allow_html=True)
 
+    bt = state.get("backtest_reference", {})
     ret_tone = "pos" if paper["total_return_pct"] >= 0 else "neg"
+    months = paper.get("months", 0)
+    started = state.get("inception_month", "—")
     cards = [
         ("今月の保有", f"{rec['asset']} ×{rec['leverage']}", _ASSET_LABEL.get(rec["asset"], ""), ""),
-        ("ペーパー資産", f"{paper['equity']:,.0f}", f"元本 {paper['capital']:,.0f}", ""),
-        ("累計リターン", f"{paper['total_return_pct']:+,.1f}%", f"{paper['months']}ヶ月", ret_tone),
-        ("年率(CAGR)", f"{paper['cagr_pct']:.1f}%", f"最大DD {paper['max_drawdown_pct']:.1f}% / Sharpe {paper['sharpe']}", ""),
+        ("ペーパー資産", f"{paper['equity']:,.0f}",
+         f"元本 {paper['capital']:,.0f} / {started}運用開始", ""),
+        ("運用リターン（実績）", f"{paper['total_return_pct']:+,.1f}%",
+         (f"運用{months}ヶ月" if months else "今月スタート（実績はこれから）"), ret_tone),
+        ("過去検証（仮想・参考）", f"年率{bt.get('cagr_pct','—')}%",
+         f"{bt.get('since','')}〜 / 最大DD {bt.get('max_drawdown_pct','—')}% / Sharpe {bt.get('sharpe','—')}", ""),
     ]
     grid = '<div class="grid">' + "".join(
         f'<div class="kpi"><div class="kpi-l">{l}</div><div class="kpi-v num {t}">{v}</div>'
         f'<div class="kpi-s">{s}</div></div>' for l, v, s, t in cards) + "</div>"
     st.markdown(grid, unsafe_allow_html=True)
 
-    # equity curve
+    if months == 0:
+        st.markdown('<div class="panel" style="color:var(--muted);font-size:.9rem">'
+                    'これは<b>今月から始めるペーパー運用</b>です。資産は元本からスタートし、'
+                    '毎月の保有実績がここに積み上がります。右上の「過去検証」は2005年からの'
+                    '<b>仮想シミュレーション（実際の保有ではありません）</b>で、戦略の実力の参考値です。'
+                    '</div>', unsafe_allow_html=True)
+
+    # forward paper equity curve
     curve = state.get("equity_curve") or []
-    if curve:
-        st.markdown('<div class="sec">ペーパー資産の推移</div>', unsafe_allow_html=True)
+    if len(curve) > 1:
+        st.markdown('<div class="sec">ペーパー資産の推移（運用開始から）</div>', unsafe_allow_html=True)
         df = pd.DataFrame(curve)
         df["month"] = pd.to_datetime(df["month"])
         st.line_chart(df.set_index("month")["equity"], height=240, color="#6c8cff")
