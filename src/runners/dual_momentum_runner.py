@@ -58,9 +58,13 @@ class DualMomentumRunner:
 
         ret = self.strategy.backtest(monthly)
         positions = self.strategy.positions(monthly)
-        equity = self.capital * float((1.0 + ret).prod())
+        equity_series = self.capital * (1.0 + ret).cumprod()
+        equity = float(equity_series.iloc[-1])
         perf = performance(ret)
         rec = self.strategy.recommend(monthly)
+
+        equity_curve = [{"month": ts.strftime("%Y-%m"), "equity": round(float(v), 2)}
+                        for ts, v in equity_series.items()]
 
         history = []
         for ts in ret.index[-12:]:
@@ -86,6 +90,7 @@ class DualMomentumRunner:
                 "sharpe": round(perf["sharpe"], 2), "months": perf["months"],
             },
             "history": history,
+            "equity_curve": equity_curve,
         }
         tmp = self.state_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False))

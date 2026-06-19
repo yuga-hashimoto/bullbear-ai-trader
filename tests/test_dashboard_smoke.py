@@ -1,11 +1,9 @@
-"""Dashboard must render for normal / NO_TRADE-only / rejected-only runs.
+"""Dual-momentum dashboard renders from a persisted state file.
 
-Skipped automatically when streamlit is not installed (it is an optional,
-viewer-only dependency).
+Skipped automatically when streamlit is not installed (viewer-only dependency).
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 
 import pytest
@@ -13,75 +11,43 @@ import pytest
 streamlit = pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-from src.backtest.engine import BacktestEngine  # noqa: E402
-from src.backtest.metrics import benchmark_comparison, compute_metrics  # noqa: E402
-from src.reports.report import write_reports  # noqa: E402
-from src.reports.runs import new_run_id, run_dir, save_run  # noqa: E402
-from tests.conftest import ConstantSignalAgent  # noqa: E402
-
 DASHBOARD = "src/reports/dashboard.py"
 
 
-def _make_run(cfg, labeled_matrix, agent, reports_dir):
-    cfg = dataclasses.replace(cfg, paths={**cfg.paths, "reports_dir": str(reports_dir)})
-    result = BacktestEngine(cfg, agent).run(labeled_matrix)
-    metrics = compute_metrics(result, 5)
-    bench = benchmark_comparison({}, [])
-    run_id = new_run_id()
-    d = run_dir(cfg, run_id)
-    paths = write_reports(d, metrics, bench, result.trades_frame, result.daily_pnl,
-                          counters=result.counters)
-    save_run(cfg, run_id, result, metrics, bench, {"run_id": run_id}, paths)
-    # Seed a minimal evolution registry so the Evolution tab renders populated.
-    from src.evolution.registry import EvolutionRegistry
-    reg = EvolutionRegistry(reports_dir)
-    reg.ensure_champion()
-    reg.create_challenger({"risk.confidence_threshold": 0.7}, source="manual")
+def _write_state(reports_dir):
+    runtime = reports_dir / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "dual_momentum.json").write_text(json.dumps({
+        "updated_at": "2026-06-19T15:06:15+00:00",
+        "as_of_month": "2026-06",
+        "recommendation": {
+            "asset": "EEM", "leverage": 1.5, "is_risk_on": True, "momentum": 0.35,
+            "ranking": [{"symbol": "EEM", "momentum_pct": 35.0},
+                        {"symbol": "QQQ", "momentum_pct": 27.9},
+                        {"symbol": "GLD", "momentum_pct": 4.9}],
+        },
+        "paper": {"capital": 1_000_000.0, "equity": 38_718_976.0,
+                  "total_return_pct": 3771.9, "cagr_pct": 18.38,
+                  "max_drawdown_pct": -38.73, "sharpe": 0.79, "months": 248},
+        "history": [{"month": "2026-05", "held": "EEM", "return_pct": 10.5},
+                    {"month": "2026-06", "held": "EEM", "return_pct": 5.3}],
+        "equity_curve": [{"month": "2026-05", "equity": 36_800_000.0},
+                         {"month": "2026-06", "equity": 38_718_976.0}],
+    }))
 
 
-@pytest.mark.parametrize("agent", [
-    ConstantSignalAgent(action="BUY_BULL", symbol="TQQQ", family="NASDAQ",
-                        direction="UP", confidence=0.99),                 # has trades
-    ConstantSignalAgent(action="NO_TRADE"),                               # NO_TRADE only
-    ConstantSignalAgent(action="BUY_BULL", symbol="TQQQ", family="NASDAQ",
-                        direction="UP", confidence=0.05),                 # rejected only
-])
-def test_dashboard_renders(cfg, labeled_matrix, agent, tmp_path, monkeypatch):
+def test_dashboard_renders_from_state(tmp_path, monkeypatch):
     reports_dir = tmp_path / "reports"
-    _make_run(cfg, labeled_matrix, agent, reports_dir)
+    _write_state(reports_dir)
     monkeypatch.setenv("BULLBEAR_REPORTS_DIR", str(reports_dir))
     at = AppTest.from_file(DASHBOARD, default_timeout=60).run()
     assert not at.exception, at.exception
-
-
-def test_dashboard_labels_live_paper_metrics_separately_from_backtest(
-    cfg, labeled_matrix, tmp_path, monkeypatch
-):
-    reports_dir = tmp_path / "reports"
-    _make_run(cfg, labeled_matrix, ConstantSignalAgent("NO_TRADE"), reports_dir)
-    runtime = reports_dir / "runtime"
-    runtime.mkdir(parents=True)
-    (runtime / "heartbeat.json").write_text(json.dumps({
-        "timestamp": "2026-06-18T10:12:56-04:00",
-        "status": "running",
-        "daily_pnl": -8.76,
-        "daily_pnl_jpy": -1313.93,
-        "trades_today": 1,
-    }))
-    (runtime / "daily_state.json").write_text(json.dumps({
-        "marked_equity": 6666.67 - 8.76,
-    }))
-    (runtime / "paper_events.jsonl").write_text(json.dumps({
-        "event": "POSITION_CLOSED",
-        "net_pnl": -8.76,
-    }))
-    monkeypatch.setenv("BULLBEAR_REPORTS_DIR", str(reports_dir))
-
-    at = AppTest.from_file(DASHBOARD, default_timeout=60).run()
-
     rendered = " ".join(m.value for m in at.markdown)
-    # live paper return + win rate are surfaced (computed from runtime, not backtest)
-    assert "-0.13%" in rendered
-    assert "0.0%" in rendered
-    assert "最新バックテスト" not in rendered
-    assert not any("これまでの成績" in tab.label for tab in at.tabs)
+    assert "EEM" in rendered                  # current holding surfaced
+    assert "+3,771.9%" in rendered or "3771.9" in rendered
+
+
+def test_dashboard_handles_missing_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("BULLBEAR_REPORTS_DIR", str(tmp_path / "empty"))
+    at = AppTest.from_file(DASHBOARD, default_timeout=60).run()
+    assert not at.exception, at.exception      # shows a friendly "waiting" message
