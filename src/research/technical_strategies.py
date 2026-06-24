@@ -43,7 +43,7 @@ def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
     loss = -delta.clip(upper=0.0)
     avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0.0, pd.NA)
+    rs = avg_gain / avg_loss.mask(avg_loss == 0.0)
     rsi = 100.0 - (100.0 / (1.0 + rs))
     return rsi.fillna(50.0)
 
@@ -182,7 +182,7 @@ def _turtle_breakout(df: pd.DataFrame, entry: int = 20, exit: int = 10, **_: flo
     close = df["close"]
     high = df["high"].rolling(int(entry), min_periods=int(entry)).max().shift(1)
     low = df["low"].rolling(int(entry), min_periods=int(entry)).min().shift(1)
-    atr = _atr_pct(df, int(exit)).replace(0.0, pd.NA)
+    atr = _atr_pct(df, int(exit)).mask(lambda s: s == 0.0)
     raw = pd.Series(0.0, index=df.index)
     raw = raw.mask(close > high, ((close - high) / close) / atr)
     raw = raw.mask(close < low, -(((low - close) / close) / atr))
