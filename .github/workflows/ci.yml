@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Unit tests
+        run: python -m pytest -q
+      - name: Integration smoke test with synthetic data
+        run: |
+          python -m src.cli list-strategies
+          python -m src.cli fetch-data --config config/synthetic.yaml
+          python -m src.cli build-features --config config/synthetic.yaml
+          python -m src.cli quick-strategy --config config/synthetic.yaml --strategy sma_cross --family SEMICONDUCTOR
+          python -m src.cli strategy-sweep --config config/synthetic.yaml --family NASDAQ --strategies sma_cross macd momentum
