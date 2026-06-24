@@ -3,6 +3,14 @@
 Files are stored as Parquet when possible (falling back to CSV) under the
 configured ``raw_dir`` / ``features_dir``. Symbols are filename-sanitized so
 that tickers like ``^VIX`` map to a safe path.
+
+An optional SQLite OHLCV cache can also be enabled with:
+
+    storage:
+      sqlite_enabled: true
+      sqlite_db: data/cache/market_data.sqlite
+
+Parquet/CSV remains the canonical artifact; SQLite is a query/cache layer.
 """
 from __future__ import annotations
 
@@ -51,14 +59,39 @@ def _read(base: Path) -> pd.DataFrame:
     raise FileNotFoundError(f"no stored data at {pq} or {csv}")
 
 
+def _sqlite_enabled(cfg: Config) -> bool:
+    return bool((cfg.raw.get("storage", {}) or {}).get("sqlite_enabled", False))
+
+
+def _sqlite_db_path(cfg: Config) -> str:
+    storage = dict(cfg.raw.get("storage", {}) or {})
+    return str(storage.get("sqlite_db", "data/cache/market_data.sqlite"))
+
+
 def save_raw(cfg: Config, symbol: str, df: pd.DataFrame) -> Path:
     base = _path(cfg.path("raw_dir"), symbol, cfg.interval, "parquet").with_suffix("")
-    return _write(df, base)
+    path = _write(df, base)
+    if _sqlite_enabled(cfg):
+        try:
+            from .sqlite_cache import SQLiteOHLCVCache
+
+            rows = SQLiteOHLCVCache(_sqlite_db_path(cfg)).write(symbol, cfg.interval, df)
+            log.info("cached %s rows for %s %s in SQLite", rows, symbol, cfg.interval)
+        except Exception as exc:  # cache must not break canonical file persistence
+            log.warning("SQLite cache write failed for %s: %s", symbol, exc)
+    return path
 
 
 def load_raw(cfg: Config, symbol: str) -> pd.DataFrame:
     base = _path(cfg.path("raw_dir"), symbol, cfg.interval, "parquet").with_suffix("")
-    return _read(base)
+    try:
+        return _read(base)
+    except FileNotFoundError:
+        if not _sqlite_enabled(cfg):
+            raise
+        from .sqlite_cache import SQLiteOHLCVCache
+
+        return SQLiteOHLCVCache(_sqlite_db_path(cfg)).read(symbol, cfg.interval)
 
 
 def save_features(cfg: Config, df: pd.DataFrame, name: str = "features") -> Path:
@@ -69,6 +102,12 @@ def save_features(cfg: Config, df: pd.DataFrame, name: str = "features") -> Path
 def load_features(cfg: Config, name: str = "features") -> pd.DataFrame:
     base = cfg.path("features_dir") / f"{name}_{cfg.interval}"
     return _read(base)
+
+
+def sqlite_cache_status(cfg: Config) -> list[dict[str, object]]:
+    from .sqlite_cache import SQLiteOHLCVCache
+
+    return SQLiteOHLCVCache(_sqlite_db_path(cfg)).status()
 
 
 def make_data_source(cfg: Config) -> DataSource:
