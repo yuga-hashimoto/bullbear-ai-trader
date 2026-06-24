@@ -37,7 +37,7 @@ class StrategyConfig:
 class AgentConfig:
     """How signals are produced. Decision-making lives OUTSIDE this repo."""
 
-    type: str = "mock"            # mock | replay | external | local_model
+    type: str = "mock"            # mock | replay | external | local_model | rule
     endpoint: str | None = None
     signal_file: str | None = None
     transport: str = "http"       # http | command | mcp | file | stdio | websocket
@@ -206,7 +206,7 @@ def _validate(cfg: Config) -> None:
         raise ValueError("risk.max_drawdown_pct must be in (0, 100)")
     if not (0 < cfg.risk.max_portfolio_risk_pct <= cfg.risk.max_drawdown_pct):
         raise ValueError("portfolio risk must be positive and no larger than max drawdown")
-    if cfg.agent.type not in {"mock", "replay", "external", "local_model"}:
+    if cfg.agent.type not in {"mock", "replay", "external", "local_model", "rule"}:
         raise ValueError(f"unknown agent.type: {cfg.agent.type}")
     for sym, spec in cfg.instruments.items():
         if "decision" not in spec or "direction" not in spec:

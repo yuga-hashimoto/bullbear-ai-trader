@@ -42,6 +42,12 @@ timezone: America/New_York
 session_open: "09:30"
 session_close: "16:00"
 
+# Optional local SQLite cache. Parquet/CSV files remain canonical; SQLite is a
+# query/cache layer for repeated research runs and MCP inspection.
+storage:
+  sqlite_enabled: false
+  sqlite_db: data/cache/market_data.sqlite
+
 # --- Train / Test split (time-based, no shuffling) --------------------------
 train_start: "2026-04-20"
 train_end: "2026-05-29"
@@ -64,7 +70,7 @@ labeling:
 
 # --- Agent (decision-making lives OUTSIDE this repo) ------------------------
 # The agent only PROPOSES trades via a standard Signal JSON. It never places
-# orders. type: mock | replay | external | local_model.
+# orders. type: mock | replay | external | local_model | rule.
 agent:
   type: external
   endpoint: null               # required for type: external (e.g. http URL)
@@ -72,6 +78,15 @@ agent:
   transport: http              # http | command | mcp | file | stdio | websocket
   timeout_seconds: 30
   fallback_to_no_trade: true   # external misconfig -> safe fallback
+
+# Built-in deterministic strategy agent. Used by `--agent rule`, `quick-strategy`,
+# `strategy-sweep` and the MCP server. It is a baseline/challenger seed, not an
+# order router; Signal validation and Risk Engine still decide.
+rule_agent:
+  strategy: sma_cross          # see `python -m src.cli list-strategies`
+  family: auto                 # auto | NASDAQ | SEMICONDUCTOR
+  expected_holding_minutes: 60
+  params: {}
 
 # --- Local ML model (OPTIONAL, used only by LocalModelAgent; NOT main path) -
 model_type: lightgbm         # lightgbm | random_forest | gradient_boosting

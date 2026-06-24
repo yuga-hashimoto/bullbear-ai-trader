@@ -5,6 +5,9 @@
     python -m src.cli train          --config config/default.yaml      # LocalModelAgent helper
     python -m src.cli backtest       --config config/default.yaml --agent mock
     python -m src.cli backtest       --config config/default.yaml --agent replay --signals data/signals/sample.jsonl
+    python -m src.cli list-strategies
+    python -m src.cli quick-strategy --config config/default.yaml --strategy sma_cross --family SEMICONDUCTOR
+    python -m src.cli strategy-sweep --config config/default.yaml
     python -m src.cli run-pipeline   --config config/default.yaml --agent mock
     python -m src.cli validate-signals --signals data/signals/sample.jsonl
     python -m src.cli report         --config config/default.yaml --run-id latest
@@ -25,9 +28,46 @@ from .utils.logging import get_logger, setup_logging
 
 log = get_logger("cli")
 
+AGENT_CHOICES = ["mock", "replay", "external", "local_model", "rule"]
+
 
 def _add_config_arg(p: argparse.ArgumentParser) -> None:
     p.add_argument("--config", default="config/default.yaml", help="path to YAML config")
+
+
+def _add_rule_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--strategy", default="sma_cross", help="built-in rule strategy name")
+    p.add_argument("--family", default="auto", choices=["auto", "NASDAQ", "SEMICONDUCTOR"])
+    p.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="override a rule strategy parameter; may be repeated",
+    )
+
+
+def _parse_rule_params(items: list[str]) -> dict[str, float | int | str]:
+    params: dict[str, float | int | str] = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(f"--param must be KEY=VALUE, got {item!r}")
+        key, value = item.split("=", 1)
+        value = value.strip()
+        try:
+            parsed: float | int | str
+            parsed = int(value) if value.isdigit() or (value.startswith("-") and value[1:].isdigit()) else float(value)
+        except ValueError:
+            parsed = value
+        params[key.strip()] = parsed
+    return params
+
+
+def _set_rule_agent(cfg, strategy: str, family: str, params: dict[str, float | int | str]) -> None:
+    raw = cfg.raw.setdefault("rule_agent", {})
+    raw["strategy"] = strategy
+    raw["family"] = family
+    raw["params"] = params
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,9 +85,20 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("backtest", "run-pipeline"):
         p = sub.add_parser(name)
         _add_config_arg(p)
-        p.add_argument("--agent", default=None,
-                       choices=["mock", "replay", "external", "local_model"])
+        p.add_argument("--agent", default=None, choices=AGENT_CHOICES)
         p.add_argument("--signals", default=None, help="JSONL signal file for replay agent")
+
+    sub.add_parser("list-strategies", help="list built-in deterministic strategy baselines")
+
+    p_qs = sub.add_parser("quick-strategy", help="run one built-in rule strategy through the normal Risk Engine")
+    _add_config_arg(p_qs)
+    _add_rule_args(p_qs)
+
+    p_sweep = sub.add_parser("strategy-sweep", help="run all or selected built-in rule strategies")
+    _add_config_arg(p_sweep)
+    p_sweep.add_argument("--strategies", nargs="*", default=None)
+    p_sweep.add_argument("--family", default="auto", choices=["auto", "NASDAQ", "SEMICONDUCTOR"])
+    p_sweep.add_argument("--param", action="append", default=[], metavar="KEY=VALUE")
 
     p_val = sub.add_parser("validate-signals", help="validate a signal JSONL file")
     p_val.add_argument("--signals", required=True)
@@ -55,8 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Continuous runners.
     p_paper = sub.add_parser("run-paper", help="run the always-on paper trading runner")
     _add_config_arg(p_paper)
-    p_paper.add_argument("--agent", default=None,
-                         choices=["mock", "replay", "external", "local_model"])
+    p_paper.add_argument("--agent", default=None, choices=AGENT_CHOICES)
     p_paper.add_argument("--signals", default=None)
 
     _add_config_arg(sub.add_parser("runner-status"))
@@ -64,6 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_arg(sub.add_parser("start-runner"))
     _add_config_arg(sub.add_parser("doctor"))
     _add_config_arg(sub.add_parser("readiness"))
+    _add_config_arg(sub.add_parser("sqlite-cache-status"))
 
     p_live = sub.add_parser("run-live", help="(disabled) future live runner")
     _add_config_arg(p_live)
@@ -85,8 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name)
         _add_config_arg(p)
         p.add_argument("--env", default="paper", choices=["paper", "live"])
-        p.add_argument("--agent", default=None,
-                       choices=["mock", "replay", "external", "local_model"])
+        p.add_argument("--agent", default=None, choices=AGENT_CHOICES)
         p.add_argument("--signals", default=None)
 
     p_le = sub.add_parser("run-live-evolution",
@@ -207,6 +257,12 @@ def _handle_evolution(args, cfg) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    if args.command == "list-strategies":
+        from .research.technical_strategies import list_strategy_specs
+
+        print(json.dumps([s.to_dict() for s in list_strategy_specs()], indent=2, ensure_ascii=False))
+        return 0
+
     if args.command == "validate-signals":
         from .agents.replay_agent import validate_signal_file
 
@@ -233,6 +289,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "backtest":
         print(json.dumps(backtest(cfg, args.agent, args.signals), indent=2, default=str))
+        return 0
+
+    if args.command == "quick-strategy":
+        params = _parse_rule_params(args.param)
+        _set_rule_agent(cfg, args.strategy, args.family, params)
+        print(json.dumps(backtest(cfg, "rule", None), indent=2, default=str, ensure_ascii=False))
+        return 0
+
+    if args.command == "strategy-sweep":
+        from .research.technical_strategies import strategy_names
+
+        params = _parse_rule_params(args.param)
+        names = args.strategies or strategy_names()
+        summaries = []
+        for name in names:
+            _set_rule_agent(cfg, name, args.family, params)
+            result = backtest(cfg, "rule", None)
+            summaries.append({
+                "strategy": name,
+                "family": args.family,
+                "run_id": result["run_id"],
+                "metrics": result["metrics"],
+            })
+        print(json.dumps({"results": summaries}, indent=2, default=str, ensure_ascii=False))
         return 0
 
     if args.command == "run-pipeline":
@@ -304,6 +384,12 @@ def main(argv: list[str] | None = None) -> int:
         result = build_readiness(cfg)
         print(json.dumps(result, indent=2, default=str))
         return 0 if result["paper"]["ready"] else 1
+
+    if args.command == "sqlite-cache-status":
+        from .data.store import sqlite_cache_status
+
+        print(json.dumps({"cache": sqlite_cache_status(cfg)}, indent=2, default=str))
+        return 0
 
     if args.command == "run-live":
         from .config.settings import LiveTradingDisabledError

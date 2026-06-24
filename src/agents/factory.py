@@ -36,6 +36,11 @@ def make_agent(
             raise ValueError("replay agent requires --signals / agent.signal_file")
         return ReplayAgent(path)
 
+    if kind == "rule":
+        from .rule_agent import RuleStrategyAgent
+
+        return RuleStrategyAgent(cfg)
+
     if kind == "local_model":
         from .local_model_agent import LocalModelAgent
 
